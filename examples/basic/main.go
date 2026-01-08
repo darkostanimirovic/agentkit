@@ -10,11 +10,14 @@ import (
 )
 
 func main() {
-	// Create a basic agent
+	// Create a basic agent with silent logging for clean CLI output.
+	// The agent emits events via the event channel, while internal logs
+	// are disabled to keep stdout clean.
 	agent, err := agentkit.New(agentkit.Config{
 		APIKey:       os.Getenv("OPENAI_API_KEY"),
 		Model:        "gpt-4o-mini",
 		SystemPrompt: buildSystemPrompt,
+		Logging:      agentkit.LoggingConfig{}.Silent(),
 	})
 	if err != nil {
 		log.Fatal(err)

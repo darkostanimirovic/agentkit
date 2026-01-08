@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -49,6 +50,39 @@ func DefaultLoggingConfig() LoggingConfig {
 	}
 }
 
+// Silent returns a LoggingConfig that disables all console logging.
+// This is useful for CLI applications where you only want agent events
+// (streamed via the event channel) and no internal log output.
+//
+// Example:
+//
+//	agent, err := agentkit.New(agentkit.Config{
+//	    APIKey: os.Getenv("OPENAI_API_KEY"),
+//	    Model: "gpt-4o-mini",
+//	    Logging: agentkit.LoggingConfig{}.Silent(),
+//	})
+func (LoggingConfig) Silent() *LoggingConfig {
+	return &LoggingConfig{
+		Handler: slog.NewTextHandler(io.Discard, nil),
+	}
+}
+
+// Verbose returns a LoggingConfig with debug-level logging enabled.
+// This is useful during development for detailed internal diagnostics.
+//
+// Example:
+//
+//	agent, err := agentkit.New(agentkit.Config{
+//	    APIKey: os.Getenv("OPENAI_API_KEY"),
+//	    Model: "gpt-4o-mini",
+//	    Logging: agentkit.LoggingConfig{}.Verbose(),
+//	})
+func (LoggingConfig) Verbose() *LoggingConfig {
+	return &LoggingConfig{
+		Level: slog.LevelDebug,
+	}
+}
+
 func resolveLogger(cfg LoggingConfig) *slog.Logger {
 	if cfg.Logger != nil {
 		return cfg.Logger
@@ -62,7 +96,9 @@ func resolveLogger(cfg LoggingConfig) *slog.Logger {
 		level = slog.LevelInfo
 	}
 
-	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+	// Default to stderr following Unix conventions: output to stdout, logs to stderr.
+	// This prevents log pollution in CLI applications where stdout is for agent events.
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 }
 
 func resolvePromptLogPath(cfg LoggingConfig) string {

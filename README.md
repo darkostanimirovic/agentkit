@@ -265,7 +265,42 @@ tool := agentkit.NewTool("serial_tool").
 
 ### Observability & Logging
 
-AgentKit provides middleware hooks and configurable logging.
+AgentKit separates **agent events** from **internal logs**:
+
+- **Events** (streamed via channel): What the agent is doing - thinking chunks, tool calls, results, final output. This is the primary output for CLI applications and UIs.
+- **Logs** (via slog): Internal diagnostics for debugging - iteration counts, chunk metadata, errors. These go to stderr by default (following Unix conventions).
+
+#### Clean CLI Output (Recommended for most CLI apps)
+
+```go
+agent, err := agentkit.New(agentkit.Config{
+    APIKey:  os.Getenv("OPENAI_API_KEY"),
+    Model:   "gpt-4o-mini",
+    Logging: agentkit.LoggingConfig{}.Silent(), // Disable internal logs
+})
+
+// Handle events only - no log pollution
+for event := range agent.Run(ctx, "do something") {
+    switch event.Type {
+    case agentkit.EventTypeThinkingChunk:
+        fmt.Print(event.Data["chunk"]) // Clean stdout
+    case agentkit.EventTypeFinalOutput:
+        fmt.Printf("\n%s\n", event.Data["response"])
+    }
+}
+```
+
+#### Development/Debugging
+
+```go
+agent, err := agentkit.New(agentkit.Config{
+    APIKey:  os.Getenv("OPENAI_API_KEY"),
+    Model:   "gpt-4o-mini"),
+    Logging: agentkit.LoggingConfig{}.Verbose(), // Debug-level logs to stderr
+})
+```
+
+#### Custom Logging
 
 ```go
 agent, err := agentkit.New(agentkit.Config{
@@ -273,17 +308,31 @@ agent, err := agentkit.New(agentkit.Config{
     Model:  "gpt-4o-mini",
     Logging: &agentkit.LoggingConfig{
         Level:           slog.LevelInfo,
-        LogPrompts:      true,
+        Handler:         customHandler,        // Use your own handler
+        LogPrompts:      true,                 // Log prompts to file
         LogResponses:    true,
         LogToolCalls:    true,
         RedactSensitive: true,
         PromptLogPath:   "/var/log/agentkit/prompts.log",
     },
 })
-if err != nil {
-    log.Fatal(err)
-}
+```
 
+**Default Behavior:**
+- Logs go to stderr (not stdout) following Unix conventions
+- Use `.Silent()` for CLI apps where you only want events
+- Use `.Verbose()` for development debugging
+
+**Migration Note:** Prior versions logged to stdout by default. This has been changed to stderr to prevent log pollution in CLI applications. To restore the old behavior:
+```go
+Logging: &agentkit.LoggingConfig{
+    Handler: slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}),
+}
+```
+
+AgentKit also provides middleware hooks for custom observability:
+
+```go
 agent.Use(myMiddleware)
 ```
 

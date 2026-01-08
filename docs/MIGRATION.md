@@ -1,4 +1,103 @@
-# Migration to OpenAI Responses API
+# Migration Guide
+
+This document covers breaking changes and migration paths for AgentKit.
+
+## Logging Output Changes (Current)
+
+### Breaking Change: Default Log Output
+
+**What Changed:**
+- Default log output changed from `stdout` to `stderr`
+- This follows Unix conventions: application output goes to `stdout`, diagnostic logs go to `stderr`
+
+**Why:**
+Users reported that internal logs (iteration counts, chunk metadata, etc.) were polluting their CLI application output, making it difficult to see agent events (thinking, tool calls, results).
+
+**Before:**
+```go
+agent, _ := agentkit.New(agentkit.Config{
+    APIKey: os.Getenv("OPENAI_API_KEY"),
+    Model:  "gpt-4o-mini",
+})
+// Logs went to stdout, mixed with agent events
+```
+
+**After (Recommended for CLI):**
+```go
+agent, _ := agentkit.New(agentkit.Config{
+    APIKey:  os.Getenv("OPENAI_API_KEY"),
+    Model:   "gpt-4o-mini",
+    Logging: agentkit.LoggingConfig{}.Silent(), // Clean stdout
+})
+// Events go to stdout (via your event handler)
+// No log pollution
+```
+
+**After (Default behavior):**
+```go
+agent, _ := agentkit.New(agentkit.Config{
+    APIKey: os.Getenv("OPENAI_API_KEY"),
+    Model:  "gpt-4o-mini",
+    // No explicit Logging config
+})
+// Logs now go to stderr by default
+// Your application output remains clean
+```
+
+**Migration: Restore Old Behavior (Not Recommended):**
+```go
+agent, _ := agentkit.New(agentkit.Config{
+    APIKey: os.Getenv("OPENAI_API_KEY"),
+    Model:  "gpt-4o-mini"),
+    Logging: &agentkit.LoggingConfig{
+        Handler: slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}),
+    },
+})
+```
+
+### New Helper Methods
+
+Two new convenience methods for common scenarios:
+
+**Silent Mode (CLI Applications):**
+```go
+// Completely disable internal logs - only events are output
+Logging: agentkit.LoggingConfig{}.Silent()
+```
+
+**Verbose Mode (Development/Debugging):**
+```go
+// Enable debug-level logging to stderr
+Logging: agentkit.LoggingConfig{}.Verbose()
+```
+
+### Understanding Events vs Logs
+
+- **Events** (via channel): What the agent is doing - thinking chunks, tool calls, results. This is your primary output.
+- **Logs** (via slog): Internal diagnostics - iteration counts, chunk metadata, errors. For debugging/monitoring.
+
+**Recommended Pattern:**
+```go
+agent, _ := agentkit.New(agentkit.Config{
+    APIKey:  os.Getenv("OPENAI_API_KEY"),
+    Model:   "gpt-4o-mini",
+    Logging: agentkit.LoggingConfig{}.Silent(),
+})
+
+// Handle events - this is your application output
+for event := range agent.Run(ctx, "user message") {
+    switch event.Type {
+    case agentkit.EventTypeThinkingChunk:
+        fmt.Print(event.Data["chunk"]) // Clean stdout
+    case agentkit.EventTypeFinalOutput:
+        fmt.Printf("\n%s\n", event.Data["response"])
+    }
+}
+```
+
+---
+
+## Migration to OpenAI Responses API
 
 ## Overview
 
