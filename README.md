@@ -728,9 +728,42 @@ Check out the [examples/](examples/) directory for complete working examples:
 ## Documentation
 
 - [Usage Guide](docs/USAGE.md) - Installation and usage
+- [Tracing Guide](docs/TRACING.md) - LLM observability with Langfuse
 - [Migration Guide](docs/MIGRATION.md) - Upgrading between versions
 - [Project Structure](docs/PROJECT_STRUCTURE.md) - Code organization
 - [Community Feedback](docs/COMMUNITY_FEEDBACK.md) - Feature requests and feedback
+
+## LLM Tracing
+
+AgentKit includes built-in support for LLM observability through an extensible tracing interface. Currently supports Langfuse via OpenTelemetry.
+
+```go
+// Create Langfuse tracer
+tracer, err := agentkit.NewLangfuseTracer(agentkit.LangfuseConfig{
+    PublicKey: os.Getenv("LANGFUSE_PUBLIC_KEY"),
+    SecretKey: os.Getenv("LANGFUSE_SECRET_KEY"),
+    BaseURL:   "https://cloud.langfuse.com",
+    Enabled:   true,
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer tracer.Shutdown(context.Background())
+
+// Create agent with tracing
+agent, err := agentkit.New(agentkit.Config{
+    APIKey: os.Getenv("OPENAI_API_KEY"),
+    Tracer: tracer,  // Enable tracing
+})
+```
+
+Traces automatically include:
+- Agent execution flows
+- LLM generations with token usage and costs
+- Tool executions with inputs and outputs
+- Error details and timing information
+
+See [docs/TRACING.md](docs/TRACING.md) for complete setup instructions.
 
 ## Future Enhancements
 

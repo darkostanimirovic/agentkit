@@ -42,6 +42,7 @@ type Agent struct {
 	middlewares       []Middleware
 	eventBuffer       int
 	parallelConfig    ParallelConfig
+	tracer            Tracer
 }
 
 var promptLogMu sync.Mutex
@@ -62,6 +63,7 @@ type Config struct {
 	Logging               *LoggingConfig    // Optional logging configuration
 	EventBuffer           int               // Optional event channel buffer size (0 = default)
 	ParallelToolExecution *ParallelConfig   // Optional parallel tool execution configuration
+	Tracer                Tracer            // Optional tracer for LLM observability (e.g., Langfuse)
 }
 
 // Common errors for config validation
@@ -177,6 +179,12 @@ func New(cfg Config) (*Agent, error) {
 		eventBuffer = defaultEventBuffer
 	}
 
+	// Default tracer (NoOp if not provided)
+	tracer := cfg.Tracer
+	if tracer == nil {
+		tracer = &NoOpTracer{}
+	}
+
 	return &Agent{
 		responsesClient:   responsesClient,
 		model:             cfg.Model,
@@ -193,6 +201,7 @@ func New(cfg Config) (*Agent, error) {
 		logger:            logger,
 		eventBuffer:       eventBuffer,
 		parallelConfig:    parallelConfig,
+		tracer:            tracer,
 	}, nil
 }
 
@@ -411,6 +420,13 @@ func (a *Agent) Run(ctx context.Context, userMessage string) <-chan Event {
 	events := make(chan Event, a.eventBuffer)
 
 	go func() {
+		// Start trace for this agent run
+		traceCtx, endTrace := a.tracer.StartTrace(ctx, "agent.run",
+			WithTraceInput(userMessage),
+		)
+		defer endTrace()
+		ctx = traceCtx
+
 		// Parent publisher handling for event bubbling
 		parentPub, hasParent := GetEventPublisher(ctx)
 
@@ -709,6 +725,9 @@ func (a *Agent) runNonStreamingIteration(ctx context.Context, req ResponseReques
 	}
 	a.applyLLMResponse(callCtx, resp, nil)
 
+	// Log LLM generation to tracer
+	a.logLLMGeneration(callCtx, req, resp)
+
 	if err := a.validateResponse(callCtx, resp, events); err != nil {
 		return "", nil, false, "", err
 	}
@@ -793,6 +812,10 @@ func (a *Agent) runStreamingIteration(ctx context.Context, req ResponseRequest, 
 	}
 
 	a.logger.Info("agent iteration complete", "final_text_len", len(state.finalText), "response_id", state.responseID)
+	
+	// Log LLM generation to tracer (for streaming we log the accumulated response)
+	a.logLLMGenerationFromStream(callCtx, req, state)
+	
 	a.emit(callCtx, events, FinalOutput("Agent completed", state.finalText))
 	return state.responseID, nil, false, state.finalText, nil
 }
@@ -1081,12 +1104,33 @@ func (a *Agent) executeToolCall(ctx context.Context, toolCall ResponseToolCall, 
 		return *denialOutput
 	}
 
-	toolCtx := a.startToolCall(ctx, toolCall, args)
+	// Start span for tool execution
+	spanCtx, endSpan := a.tracer.StartSpan(ctx, toolCall.Name,
+		WithSpanType(SpanTypeTool),
+		WithSpanInput(args),
+	)
+	defer endSpan()
+
+	toolCtx := a.startToolCall(spanCtx, toolCall, args)
 	a.emit(toolCtx, events, ActionDetected(description, toolCall.CallID))
 
 	result, err := a.runTool(toolCtx, toolCall, tool, exists)
 	resultDisplay := a.formatToolResult(toolCall, tool, exists, result, err)
 	a.emit(toolCtx, events, ActionResult(resultDisplay, result))
+
+	// Log tool execution to span
+	if err != nil {
+		a.tracer.SetTraceAttributes(spanCtx, map[string]any{
+			"error": err.Error(),
+			"tool.name": toolCall.Name,
+			"tool.output": nil,
+		})
+	} else {
+		a.tracer.SetTraceAttributes(spanCtx, map[string]any{
+			"tool.name": toolCall.Name,
+			"tool.output": result,
+		})
+	}
 
 	a.finishToolCall(toolCtx, toolCall, result, err)
 
