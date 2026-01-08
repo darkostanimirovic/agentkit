@@ -188,6 +188,7 @@ type ResponseStreamChunk struct {
 	SequenceNumber int                  `json:"sequence_number,omitempty"`
 	ResponseID     string               `json:"response_id,omitempty"`
 	Response       *ResponseObject      `json:"response,omitempty"`
+	Error          *ResponseError       `json:"error,omitempty"` // For error events
 	ItemID         string               `json:"item_id,omitempty"`
 	OutputIndex    int                  `json:"output_index,omitempty"`
 	Delta          string               `json:"delta,omitempty"`     // For delta events
@@ -381,6 +382,12 @@ func (s *ResponseStream) parseChunk(data string) *ResponseStreamChunk {
 		s.logger.Error("failed to unmarshal chunk", "error", err, "data", data)
 		return nil
 	}
+
+	// Log error chunks with full data for debugging
+	if chunk.Type == "error" || chunk.Type == "response.failed" {
+		s.logger.Info("error chunk received", "type", chunk.Type, "raw_data", data)
+	}
+
 	return &chunk
 }
 

@@ -762,6 +762,21 @@ func (a *Agent) runStreamingIteration(ctx context.Context, req ResponseRequest, 
 			return "", nil, false, "", a.handleIterationError(callCtx, events, iterationErr, "stream reading failed", "model", a.model)
 		}
 
+		// Check if chunk indicates an error
+		if chunk.Type == "error" || chunk.Type == "response.failed" {
+			a.processStreamChunk(callCtx, state, chunk, events)
+			// Extract error and return
+			errorMsg := "Unknown error"
+			if chunk.Error != nil {
+				errorMsg = chunk.Error.Message
+			} else if chunk.Response != nil && chunk.Response.Error != nil {
+				errorMsg = chunk.Response.Error.Message
+			}
+			iterationErr := fmt.Errorf("LLM returned error: %s", errorMsg)
+			a.applyLLMResponse(callCtx, nil, iterationErr)
+			return "", nil, false, "", iterationErr
+		}
+
 		a.processStreamChunk(callCtx, state, chunk, events)
 	}
 
@@ -832,6 +847,8 @@ func (a *Agent) processStreamChunk(ctx context.Context, state *streamState, chun
 	a.logger.Debug("received chunk", "type", chunk.Type, "response_id", chunk.ResponseID, "item_id", chunk.ItemID, "delta_len", len(chunk.Delta))
 
 	switch chunk.Type {
+	case "error", "response.failed":
+		a.handleErrorChunk(ctx, chunk, events)
 	case "response.output_item.added":
 		a.handleOutputItemAdded(state, chunk)
 	case "response.output_text.delta":
@@ -935,6 +952,24 @@ func (a *Agent) handleOutputItemDone(state *streamState, chunk *ResponseStreamCh
 		call.Arguments = chunk.Item.Arguments
 	}
 	a.logger.Info("function call item done", "index", idx, "name", call.Name, "call_id", call.CallID)
+}
+
+func (a *Agent) handleErrorChunk(ctx context.Context, chunk *ResponseStreamChunk, events chan<- Event) {
+	errorMsg := "Unknown error"
+	errorCode := ""
+
+	// Try to extract error from the chunk directly or from Response object
+	if chunk.Error != nil {
+		errorMsg = chunk.Error.Message
+		errorCode = chunk.Error.Code
+	} else if chunk.Response != nil && chunk.Response.Error != nil {
+		errorMsg = chunk.Response.Error.Message
+		errorCode = chunk.Response.Error.Code
+	}
+
+	err := fmt.Errorf("LLM error (%s): %s", errorCode, errorMsg)
+	a.logger.Error("stream error chunk received", "code", errorCode, "message", errorMsg)
+	a.emit(ctx, events, Error(err))
 }
 
 func (a *Agent) handleResponseEvent(chunk *ResponseStreamChunk) {
