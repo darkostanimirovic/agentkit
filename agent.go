@@ -713,6 +713,9 @@ func (a *Agent) processNonStreamingOutputs(ctx context.Context, callCtx context.
 func (a *Agent) runNonStreamingIteration(ctx context.Context, req ResponseRequest, events chan<- Event) (string, []ResponseContentItem, bool, string, error) {
 	callCtx := a.applyLLMCall(ctx, req)
 	callCtx, cancel := a.withLLMTimeout(callCtx)
+
+// Start timing for LLM call tracing
+callCtx = startLLMCallTiming(callCtx)
 	if cancel != nil {
 		defer cancel()
 	}
@@ -750,6 +753,9 @@ func (a *Agent) runNonStreamingIteration(ctx context.Context, req ResponseReques
 func (a *Agent) runStreamingIteration(ctx context.Context, req ResponseRequest, events chan<- Event) (string, []ResponseContentItem, bool, string, error) {
 	callCtx := a.applyLLMCall(ctx, req)
 	callCtx, cancel := a.withLLMTimeout(callCtx)
+
+	// Start timing for LLM call tracing
+	callCtx = startLLMCallTiming(callCtx)
 	if cancel != nil {
 		defer cancel()
 	}
@@ -826,6 +832,7 @@ type streamState struct {
 	toolCallsMap map[int]*ResponseToolCall
 	finalText    string
 	chunkCount   int
+	usage        *ResponseUsage // Captured from stream final chunk
 }
 
 func newStreamState() *streamState {
@@ -884,6 +891,19 @@ func (a *Agent) processStreamChunk(ctx context.Context, state *streamState, chun
 		a.handleOutputItemDone(state, chunk)
 	case "response.done":
 		a.logger.Info("response done", "response_id", chunk.ResponseID)
+		// Capture usage data from final chunk
+		// Check both chunk.Usage (if present) and chunk.Response.Usage
+		if chunk.Usage != nil && chunk.Usage.TotalTokens > 0 {
+			state.usage = chunk.Usage
+			a.logger.Info("captured usage from chunk.Usage", "input_tokens", chunk.Usage.InputTokens, "output_tokens", chunk.Usage.OutputTokens, "total_tokens", chunk.Usage.TotalTokens)
+		} else if chunk.Response != nil && chunk.Response.Usage.TotalTokens > 0 {
+			// Make a copy of the usage struct since it's not a pointer
+			usageCopy := chunk.Response.Usage
+			state.usage = &usageCopy
+			a.logger.Info("captured usage from chunk.Response.Usage", "input_tokens", usageCopy.InputTokens, "output_tokens", usageCopy.OutputTokens, "total_tokens", usageCopy.TotalTokens)
+		} else {
+			a.logger.Warn("response.done received but no usage data found", "has_chunk_usage", chunk.Usage != nil, "has_response", chunk.Response != nil)
+		}
 	case "response.created", "response.completed":
 		a.handleResponseEvent(chunk)
 	}

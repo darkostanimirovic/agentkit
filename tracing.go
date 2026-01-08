@@ -135,6 +135,7 @@ type GenerationOptions struct {
 }
 
 // UsageInfo tracks token consumption
+// This data comes directly from OpenAI's API response
 type UsageInfo struct {
 	PromptTokens     int
 	CompletionTokens int
@@ -142,10 +143,13 @@ type UsageInfo struct {
 }
 
 // CostInfo tracks cost breakdown
+// NOTE: OpenAI's API does NOT provide cost information.
+// Cost is estimated based on published pricing and may be inaccurate.
+// Set DisableCostCalculation = true to disable cost estimation entirely.
 type CostInfo struct {
-	PromptCost     float64
-	CompletionCost float64
-	TotalCost      float64
+	PromptCost     float64 // Estimated cost for prompt tokens in USD
+	CompletionCost float64 // Estimated cost for completion tokens in USD
+	TotalCost      float64 // Estimated total cost in USD
 }
 
 // Option functions for trace configuration

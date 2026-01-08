@@ -1,10 +1,10 @@
 package agentkit
 
 import (
-	"context"
-	"errors"
-	"fmt"
-	"strings"
+"context"
+"errors"
+"fmt"
+"strings"
 )
 
 // ErrSubAgentNotConfigured is returned when a sub-agent is nil.
@@ -36,14 +36,13 @@ func NewSubAgentTool(cfg SubAgentConfig, sub *Agent) (Tool, error) {
 	}
 
 	handler := subAgentHandler(sub, normalized)
-
 	tool := NewTool(normalized.Name).
 		WithDescription(normalized.Description).
 		WithParameter(normalized.InputField, String().Required().WithDescription("Input for sub-agent")).
 		WithHandler(handler).
 		WithResultFormatter(func(_ string, result any) string {
-			return formatSubAgentResult(normalized, result)
-		}).
+return formatSubAgentResult(normalized, result)
+}).
 		Build()
 
 	return tool, nil
@@ -82,9 +81,41 @@ func subAgentHandler(sub *Agent, cfg SubAgentConfig) ToolHandler {
 			return nil, err
 		}
 
-		finalResponse, finalSummary, trace, err := runSubAgent(ctx, sub, message, cfg)
+		// Create a span for the sub-agent delegation if tracer is available
+		var spanCtx context.Context
+		var endSpan func()
+		if sub.tracer != nil {
+			spanCtx, endSpan = sub.tracer.StartSpan(ctx, fmt.Sprintf("sub_agent.%s", cfg.Name))
+			defer endSpan()
+			
+			// Add metadata about the delegation
+			sub.tracer.SetSpanAttributes(spanCtx, map[string]any{
+"sub_agent_name": cfg.Name,
+"input_length":   len(message),
+"include_trace":  cfg.IncludeTrace,
+})
+		} else {
+			spanCtx = ctx
+		}
+
+		finalResponse, finalSummary, trace, err := runSubAgent(spanCtx, sub, message, cfg)
 		if err != nil {
+			// Record error in span if tracer exists
+			if sub.tracer != nil && spanCtx != nil {
+				sub.tracer.SetSpanAttributes(spanCtx, map[string]any{
+"error": err.Error(),
+				})
+			}
 			return nil, err
+		}
+
+		// Record success metrics in span
+		if sub.tracer != nil && spanCtx != nil {
+			sub.tracer.SetSpanAttributes(spanCtx, map[string]any{
+"response_length": len(finalResponse),
+"trace_items":     len(trace),
+"has_summary":     finalSummary != "",
+})
 		}
 
 		result := map[string]any{
@@ -147,7 +178,6 @@ func formatSubAgentResult(cfg SubAgentConfig, result any) string {
 
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("✓ %s completed", formatToolName(cfg.Name)))
-
 	if cfg.IncludeTrace {
 		if traceRaw, ok := resultMap["trace"]; ok {
 			if traceItems, ok := traceRaw.([]SubAgentTraceItem); ok && len(traceItems) > 0 {
@@ -184,9 +214,9 @@ func runSubAgent(ctx context.Context, sub *Agent, message string, cfg SubAgentCo
 		text := strings.TrimSpace(narrative.String())
 		if text != "" {
 			trace = appendTrace(trace, cfg, SubAgentTraceItem{
-				Type:    "reasoning",
-				Content: text,
-			})
+Type:    "reasoning",
+Content: text,
+})
 			narrative.Reset()
 		}
 	}
@@ -212,25 +242,25 @@ func runSubAgent(ctx context.Context, sub *Agent, message string, cfg SubAgentCo
 			flushNarrative()
 			if desc, ok := event.Data["description"].(string); ok && desc != "" {
 				trace = appendTrace(trace, cfg, SubAgentTraceItem{
-					Type:    "tool_call",
-					Content: desc,
-				})
+Type:    "tool_call",
+Content: desc,
+})
 			}
 		case EventTypeActionResult:
 			flushNarrative()
 			if desc, ok := event.Data["description"].(string); ok && desc != "" {
 				trace = appendTrace(trace, cfg, SubAgentTraceItem{
-					Type:    "tool_result",
-					Content: desc,
-				})
+Type:    "tool_result",
+Content: desc,
+})
 			}
 		case EventTypeProgress:
 			flushNarrative()
 			if desc, ok := event.Data["description"].(string); ok && desc != "" {
 				trace = appendTrace(trace, cfg, SubAgentTraceItem{
-					Type:    "progress",
-					Content: desc,
-				})
+Type:    "progress",
+Content: desc,
+})
 			}
 		case EventTypeDecision:
 			flushNarrative()
@@ -239,9 +269,9 @@ func runSubAgent(ctx context.Context, sub *Agent, message string, cfg SubAgentCo
 			content := strings.TrimSpace(strings.Join([]string{action, reasoning}, " — "))
 			if content != "" {
 				trace = appendTrace(trace, cfg, SubAgentTraceItem{
-					Type:    "decision",
-					Content: content,
-				})
+Type:    "decision",
+Content: content,
+})
 			}
 		}
 	}
@@ -257,9 +287,9 @@ func runSubAgent(ctx context.Context, sub *Agent, message string, cfg SubAgentCo
 // AddSubAgent registers a sub-agent as a tool on the agent.
 func (a *Agent) AddSubAgent(name string, sub *Agent) error {
 	tool, err := NewSubAgentTool(SubAgentConfig{
-		Name:        name,
-		Description: fmt.Sprintf("Delegate to %s agent", name),
-	}, sub)
+Name:        name,
+Description: fmt.Sprintf("Delegate to %s agent", name),
+}, sub)
 	if err != nil {
 		return err
 	}
