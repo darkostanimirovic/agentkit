@@ -2,6 +2,15 @@
 
 A Go framework for building LLM-powered agents with tool calling, streaming, and elegant DX.
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/darkostanimirovic/agentkit.svg)](https://pkg.go.dev/github.com/darkostanimirovic/agentkit)
+[![Go Report Card](https://goreportcard.com/badge/github.com/darkostanimirovic/agentkit)](https://goreportcard.com/report/github.com/darkostanimirovic/agentkit)
+
+## Installation
+
+```bash
+go get github.com/darkostanimirovic/agentkit@latest
+```
+
 ## Philosophy
 
 AgentKit is inspired by Pydantic AI's design but adapted for Go best practices:
@@ -643,6 +652,37 @@ go tool cover -html=coverage.out
 2. **Integration tests**: Tool registration → execution, multi-tool scenarios, context flow
 3. **Real-world usage**: Inbox agent implementation serves as integration test
 
+## Project Structure
+
+```
+agentkit/
+├── *.go              # Core library (public API)
+├── *_test.go         # Tests
+├── examples/         # Example applications
+│   ├── basic/        # Simple agent example
+│   ├── multi-agent/  # Multi-agent orchestration
+│   └── rag/          # RAG implementation
+├── internal/         # Private packages
+│   └── testutil/     # Test utilities
+└── docs/             # Documentation
+```
+
+See [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) for detailed information.
+
+## Examples
+
+Check out the [examples/](examples/) directory for complete working examples:
+- **Basic Agent** - Simple tool usage and event handling
+- **Multi-Agent** - Agent composition and orchestration
+- **RAG** - Retrieval augmented generation
+
+## Documentation
+
+- [Usage Guide](docs/USAGE.md) - Installation and usage
+- [Migration Guide](docs/MIGRATION.md) - Upgrading between versions
+- [Project Structure](docs/PROJECT_STRUCTURE.md) - Code organization
+- [Community Feedback](docs/COMMUNITY_FEEDBACK.md) - Feature requests and feedback
+
 ## Future Enhancements
 
 - [ ] Tool result validation
@@ -650,3 +690,7 @@ go tool cover -html=coverage.out
 - [ ] Struct-tag schema generation
 - [ ] Parallel tool execution control
 - [ ] More provider adapters (Anthropic, etc.)
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details
