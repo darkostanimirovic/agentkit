@@ -577,8 +577,8 @@ type promptLogEntry struct {
 	Model              string      `json:"model"`
 	PreviousResponseID string      `json:"previous_response_id,omitempty"`
 	Instructions       string      `json:"instructions,omitempty"`
-	Input              interface{} `json:"input,omitempty"`
-	ToolChoice         interface{} `json:"tool_choice,omitempty"`
+	Input              any `json:"input,omitempty"`
+	ToolChoice         any `json:"tool_choice,omitempty"`
 	Tools              []string    `json:"tools,omitempty"`
 }
 

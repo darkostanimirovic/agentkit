@@ -68,7 +68,7 @@ type ResponseAnnotation struct {
 // ResponseTextFormat represents text format configuration
 type ResponseTextFormat struct {
 	Type       string      `json:"type"` // "text" or "json_schema"
-	JSONSchema interface{} `json:"json_schema,omitempty"`
+	JSONSchema any `json:"json_schema,omitempty"`
 }
 
 // ResponseTextConfig represents text configuration
@@ -93,19 +93,19 @@ type ResponseTool struct {
 	Type        string                 `json:"type"`
 	Name        string                 `json:"name"`
 	Description string                 `json:"description,omitempty"`
-	Parameters  map[string]interface{} `json:"parameters,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
 	Strict      bool                   `json:"strict,omitempty"`
 }
 
 // ResponseRequest represents a request to create a response
 type ResponseRequest struct {
 	Model              string              `json:"model"`
-	Input              interface{}         `json:"input,omitempty"` // string or []ResponseInput
+	Input              any         `json:"input,omitempty"` // string or []ResponseInput
 	Instructions       string              `json:"instructions,omitempty"`
 	Temperature        float32             `json:"temperature,omitempty"`
 	MaxOutputTokens    int                 `json:"max_output_tokens,omitempty"`
 	Tools              []ResponseTool      `json:"tools,omitempty"`
-	ToolChoice         interface{}         `json:"tool_choice,omitempty"` // string or ResponseToolChoice
+	ToolChoice         any         `json:"tool_choice,omitempty"` // string or ResponseToolChoice
 	Stream             bool                `json:"stream,omitempty"`
 	Store              bool                `json:"store,omitempty"`
 	PreviousResponseID string              `json:"previous_response_id,omitempty"`
@@ -128,7 +128,7 @@ type ResponseObject struct {
 	PreviousResponseID string               `json:"previous_response_id"`
 	Temperature        float32              `json:"temperature"`
 	ParallelToolCalls  bool                 `json:"parallel_tool_calls"`
-	ToolChoice         interface{}          `json:"tool_choice"`
+	ToolChoice         any          `json:"tool_choice"`
 	Tools              []ResponseTool       `json:"tools"`
 }
 
@@ -403,9 +403,9 @@ func ConvertOpenAIToolsToResponseTools(tools []openai.Tool) []ResponseTool {
 	result := make([]ResponseTool, len(tools))
 	for i, tool := range tools {
 		// Convert parameters with type assertion
-		var params map[string]interface{}
+		var params map[string]any
 		if tool.Function.Parameters != nil {
-			if p, ok := tool.Function.Parameters.(map[string]interface{}); ok {
+			if p, ok := tool.Function.Parameters.(map[string]any); ok {
 				params = p
 			} else {
 				// Try to marshal and unmarshal to convert

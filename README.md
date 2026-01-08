@@ -95,10 +95,10 @@ func buildSystemPrompt(ctx context.Context) string {
     return fmt.Sprintf("You are an assistant for %s", deps.UserName)
 }
 
-func searchHandler(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+func searchHandler(ctx context.Context, args map[string]any) (any, error) {
     query := args["query"].(string)
     // Perform search...
-    return map[string]interface{}{
+    return map[string]any{
         "results": []string{"result1", "result2"},
     }, nil
 }
@@ -148,10 +148,10 @@ tool := agentkit.NewTool("assign_team").
     WithDescription("Assign work item to a team").
     WithParameter("team_slug", agentkit.String().Required()).
     WithParameter("reasoning", agentkit.String().Optional()).
-    WithHandler(func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+    WithHandler(func(ctx context.Context, args map[string]any) (any, error) {
         teamSlug := args["team_slug"].(string)
         // Execute tool logic...
-        return map[string]interface{}{"success": true}, nil
+        return map[string]any{"success": true}, nil
     }).
     Build()
 
@@ -372,7 +372,7 @@ ctx := agentkit.WithDeps(context.Background(), MyDeps{
 })
 
 // Retrieve in tools
-func myHandler(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+func myHandler(ctx context.Context, args map[string]any) (any, error) {
     deps, err := agentkit.GetDeps[MyDeps](ctx)
     if err != nil {
         return nil, err
@@ -572,7 +572,7 @@ agent, _ := agentkit.New(agentkit.Config{
 
 - `ThinkingChunk(chunk string) Event`
 - `ActionDetected(toolName, toolID string) Event`
-- `ActionResult(toolName string, result interface{}) Event`
+- `ActionResult(toolName string, result any) Event`
 - `FinalOutput(summary, response string) Event`
 - `Error(err error) Event`
 

@@ -52,7 +52,7 @@ func ActionDetected(description, toolID string) Event {
 }
 
 // ActionResult creates an action result event
-func ActionResult(description string, result interface{}) Event {
+func ActionResult(description string, result any) Event {
 	return NewEvent(EventTypeActionResult, map[string]any{
 		"description": description,
 		"result":      result,

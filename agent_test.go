@@ -94,8 +94,8 @@ func TestAgent_AddTool(t *testing.T) {
 		t.Fatalf("failed to create agent: %v", err)
 	}
 
-	handler := func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-		return map[string]interface{}{"success": true}, nil
+	handler := func(ctx context.Context, args map[string]any) (any, error) {
+		return map[string]any{"success": true}, nil
 	}
 
 	tool := NewTool("test_tool").
@@ -128,7 +128,7 @@ func TestAgent_AddMultipleTools(t *testing.T) {
 		t.Fatalf("failed to create agent: %v", err)
 	}
 
-	handler := func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, args map[string]any) (any, error) {
 		return nil, nil
 	}
 

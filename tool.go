@@ -129,7 +129,7 @@ func (t *Tool) ToOpenAI() openai.Tool {
 }
 
 // Execute runs the tool handler
-func (t *Tool) Execute(ctx context.Context, argsJSON string) (interface{}, error) {
+func (t *Tool) Execute(ctx context.Context, argsJSON string) (any, error) {
 	var args map[string]any
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return nil, err

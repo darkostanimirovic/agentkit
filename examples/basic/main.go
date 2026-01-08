@@ -53,10 +53,10 @@ func buildSystemPrompt(ctx context.Context) string {
 	return "You are a helpful weather assistant. Use the get_weather tool to fetch weather information."
 }
 
-func weatherHandler(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+func weatherHandler(ctx context.Context, args map[string]any) (any, error) {
 	location := args["location"].(string)
 	// In a real app, you'd call a weather API here
-	return map[string]interface{}{
+	return map[string]any{
 		"location":    location,
 		"temperature": "72°F",
 		"conditions":  "Sunny",

@@ -55,7 +55,7 @@ func main() {
 	}
 }
 
-func retrieveHandler(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+func retrieveHandler(ctx context.Context, args map[string]any) (any, error) {
 	query := strings.ToLower(args["query"].(string))
 
 	// Simple keyword matching for demo purposes
@@ -67,13 +67,13 @@ func retrieveHandler(ctx context.Context, args map[string]interface{}) (interfac
 	}
 
 	if len(results) == 0 {
-		return map[string]interface{}{
+		return map[string]any{
 			"found":   false,
 			"message": "No relevant information found",
 		}, nil
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"found":  true,
 		"chunks": results,
 		"count":  len(results),

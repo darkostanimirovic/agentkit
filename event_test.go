@@ -47,7 +47,7 @@ func TestActionDetected(t *testing.T) {
 
 func TestActionResult(t *testing.T) {
 	description := "✓ Assigned to platform team"
-	result := map[string]interface{}{
+	result := map[string]any{
 		"success": true,
 		"team_id": "123",
 	}
@@ -61,9 +61,9 @@ func TestActionResult(t *testing.T) {
 		t.Errorf("expected description %s, got %v", description, event.Data["description"])
 	}
 
-	resultData, ok := event.Data["result"].(map[string]interface{})
+	resultData, ok := event.Data["result"].(map[string]any)
 	if !ok {
-		t.Fatal("expected result to be map[string]interface{}")
+		t.Fatal("expected result to be map[string]any")
 	}
 
 	if resultData["success"] != true {

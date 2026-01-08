@@ -13,10 +13,10 @@ const testUserID = "user123"
 func TestToolIntegration(t *testing.T) {
 	// Test complete tool lifecycle: build -> register -> execute
 	callCount := 0
-	handler := func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, args map[string]any) (any, error) {
 		callCount++
 		name := args["name"].(string)
-		return map[string]interface{}{
+		return map[string]any{
 			"success": true,
 			"message": "Hello, " + name,
 		}, nil
@@ -54,7 +54,7 @@ func TestToolIntegration(t *testing.T) {
 		t.Errorf("expected handler to be called once, got %d", callCount)
 	}
 
-	resultMap := result.(map[string]interface{})
+	resultMap := result.(map[string]any)
 	if resultMap["message"] != "Hello, Alice" {
 		t.Errorf("unexpected message: %v", resultMap["message"])
 	}
@@ -66,9 +66,9 @@ func TestContextWithToolExecution(t *testing.T) {
 		UserID string
 	}
 
-	handler := func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, args map[string]any) (any, error) {
 		deps := MustGetDeps[TestDeps](ctx)
-		return map[string]interface{}{
+		return map[string]any{
 			"user_id": deps.UserID,
 			"message": args["message"],
 		}, nil
@@ -86,7 +86,7 @@ func TestContextWithToolExecution(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	resultMap := result.(map[string]interface{})
+	resultMap := result.(map[string]any)
 	if resultMap["user_id"] != testUserID {
 		t.Errorf("expected user_id user123, got %v", resultMap["user_id"])
 	}
@@ -107,8 +107,8 @@ func TestMultipleToolsIntegration(t *testing.T) {
 		WithDescription("Add two numbers").
 		WithParameter("a", String().Required()).
 		WithParameter("b", String().Required()).
-		WithHandler(func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-			return map[string]interface{}{"result": "sum"}, nil
+		WithHandler(func(ctx context.Context, args map[string]any) (any, error) {
+			return map[string]any{"result": "sum"}, nil
 		}).
 		Build()
 
@@ -116,8 +116,8 @@ func TestMultipleToolsIntegration(t *testing.T) {
 		WithDescription("Multiply two numbers").
 		WithParameter("a", String().Required()).
 		WithParameter("b", String().Required()).
-		WithHandler(func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-			return map[string]interface{}{"result": "product"}, nil
+		WithHandler(func(ctx context.Context, args map[string]any) (any, error) {
+			return map[string]any{"result": "product"}, nil
 		}).
 		Build()
 
@@ -148,11 +148,11 @@ func TestMultipleToolsIntegration(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result1.(map[string]interface{})["result"] != "sum" {
+	if result1.(map[string]any)["result"] != "sum" {
 		t.Error("tool1 returned wrong result")
 	}
 
-	if result2.(map[string]interface{})["result"] != "product" {
+	if result2.(map[string]any)["result"] != "product" {
 		t.Error("tool2 returned wrong result")
 	}
 }
@@ -165,7 +165,7 @@ func TestEventStreamingSimulation(t *testing.T) {
 		events <- ThinkingChunk("Analyzing request...")
 		events <- ThinkingChunk("Planning actions...")
 		events <- ActionDetected("assign_team", "call_123")
-		events <- ActionResult("assign_team", map[string]interface{}{"success": true})
+		events <- ActionResult("assign_team", map[string]any{"success": true})
 		events <- FinalOutput("Complete", "Task assigned successfully")
 		close(events)
 	}()

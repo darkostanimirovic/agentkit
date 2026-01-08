@@ -27,8 +27,8 @@ func TestSchemaFromStruct(t *testing.T) {
 		t.Fatalf("expected type object, got %v", schema["type"])
 	}
 
-	props := schema["properties"].(map[string]interface{})
-	query := props["query"].(map[string]interface{})
+	props := schema["properties"].(map[string]any)
+	query := props["query"].(map[string]any)
 	if query["description"] != "Search query" {
 		t.Fatalf("expected description, got %v", query["description"])
 	}
@@ -45,8 +45,8 @@ func TestSchemaFromStruct_Nested(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	props := schema["properties"].(map[string]interface{})
-	filters := props["filters"].(map[string]interface{})
+	props := schema["properties"].(map[string]any)
+	filters := props["filters"].(map[string]any)
 	if filters["type"] != paramTypeObject {
 		t.Fatalf("expected nested object, got %v", filters["type"])
 	}

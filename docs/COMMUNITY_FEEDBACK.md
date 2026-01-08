@@ -26,7 +26,7 @@ func AssignTeamTool() agentkit.Tool {
         Build()
 }
 
-func assignTeamHandler(ctx context.Context, args map[string]interface{}) (interface{}, error) { ... }
+func assignTeamHandler(ctx context.Context, args map[string]any) (any, error) { ... }
 func assignTeamPendingFormatter(_ string, args map[string]any) string { ... }
 func assignTeamResultFormatter(_ string, result any) string { ... }
 ```

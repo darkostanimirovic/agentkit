@@ -24,7 +24,7 @@ func AssertError(t *testing.T, err error) {
 }
 
 // AssertEqual fails the test if got != want
-func AssertEqual(t *testing.T, got, want interface{}) {
+func AssertEqual(t *testing.T, got, want any) {
 	t.Helper()
 	if got != want {
 		t.Fatalf("got %v, want %v", got, want)

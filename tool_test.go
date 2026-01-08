@@ -47,8 +47,8 @@ func TestToolBuilder_WithParameter_String(t *testing.T) {
 		WithParameter("name", String().Required().WithDescription("User name")).
 		Build()
 
-	props := tool.parameters["properties"].(map[string]interface{})
-	nameParam := props["name"].(map[string]interface{})
+	props := tool.parameters["properties"].(map[string]any)
+	nameParam := props["name"].(map[string]any)
 
 	if nameParam["type"] != typeString {
 		t.Errorf("expected type string, got %v", nameParam["type"])
@@ -80,14 +80,14 @@ func TestToolBuilder_WithParameter_Array(t *testing.T) {
 		WithParameter("tags", Array("string").Required().WithDescription("List of tags")).
 		Build()
 
-	props := tool.parameters["properties"].(map[string]interface{})
-	tagsParam := props["tags"].(map[string]interface{})
+	props := tool.parameters["properties"].(map[string]any)
+	tagsParam := props["tags"].(map[string]any)
 
 	if tagsParam["type"] != typeArray {
 		t.Errorf("expected type array, got %v", tagsParam["type"])
 	}
 
-	items := tagsParam["items"].(map[string]interface{})
+	items := tagsParam["items"].(map[string]any)
 	itemType := items["type"].(string)
 
 	if itemType != typeString {
@@ -106,7 +106,7 @@ func TestToolBuilder_MultipleParameters(t *testing.T) {
 		WithParameter("array_field", Array("string").Required()).
 		Build()
 
-	props := tool.parameters["properties"].(map[string]interface{})
+	props := tool.parameters["properties"].(map[string]any)
 	if len(props) != 3 {
 		t.Errorf("expected 3 properties, got %d", len(props))
 	}
@@ -133,7 +133,7 @@ func TestToolBuilder_MultipleParameters(t *testing.T) {
 
 func TestToolBuilder_WithHandler(t *testing.T) {
 	called := false
-	handler := func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, args map[string]any) (any, error) {
 		called = true
 		return "result", nil
 	}
@@ -172,8 +172,8 @@ func TestToolBuilder_WithConcurrency(t *testing.T) {
 }
 
 func TestToolBuilder_Chaining(t *testing.T) {
-	handler := func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-		return map[string]interface{}{"success": true}, nil
+	handler := func(ctx context.Context, args map[string]any) (any, error) {
+		return map[string]any{"success": true}, nil
 	}
 
 	tool := NewTool("test_tool").
@@ -195,14 +195,14 @@ func TestToolBuilder_Chaining(t *testing.T) {
 		t.Error("builder chaining failed for handler")
 	}
 
-	props := tool.parameters["properties"].(map[string]interface{})
+	props := tool.parameters["properties"].(map[string]any)
 	if len(props) != 2 {
 		t.Error("builder chaining failed for parameters")
 	}
 }
 
 func TestTool_ToOpenAI(t *testing.T) {
-	handler := func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, args map[string]any) (any, error) {
 		return nil, nil
 	}
 
@@ -233,7 +233,7 @@ func TestTool_ToOpenAI(t *testing.T) {
 		t.Fatalf("parameters not JSON-encodable: %v", err)
 	}
 
-	var params map[string]interface{}
+	var params map[string]any
 	if err := json.Unmarshal(paramsJSON, &params); err != nil {
 		t.Fatalf("failed to unmarshal parameters: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestTool_ToOpenAI(t *testing.T) {
 		t.Errorf("expected type object, got %v", params["type"])
 	}
 
-	props := params["properties"].(map[string]interface{})
+	props := params["properties"].(map[string]any)
 	if len(props) != 2 {
 		t.Errorf("expected 2 properties, got %d", len(props))
 	}
@@ -273,7 +273,7 @@ func TestParameterSchema_Array(t *testing.T) {
 		t.Errorf("expected type array in map, got %v", m["type"])
 	}
 
-	items := m["items"].(map[string]interface{})
+	items := m["items"].(map[string]any)
 	itemType := items["type"].(string)
 
 	if itemType != typeString {
@@ -352,9 +352,9 @@ func TestParameterSchema_WithEnum(t *testing.T) {
 }
 
 func TestTool_Execute(t *testing.T) {
-	handler := func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, args map[string]any) (any, error) {
 		name := args["name"].(string)
-		return map[string]interface{}{"greeting": "Hello, " + name}, nil
+		return map[string]any{"greeting": "Hello, " + name}, nil
 	}
 
 	tool := NewTool("greet").
@@ -367,14 +367,14 @@ func TestTool_Execute(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	resultMap := result.(map[string]interface{})
+	resultMap := result.(map[string]any)
 	if resultMap["greeting"] != "Hello, Alice" {
 		t.Errorf("unexpected result: %v", resultMap)
 	}
 }
 
 func TestTool_Execute_InvalidJSON(t *testing.T) {
-	handler := func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, args map[string]any) (any, error) {
 		return nil, nil
 	}
 
@@ -389,7 +389,7 @@ func TestTool_Execute_InvalidJSON(t *testing.T) {
 
 func TestTool_Execute_HandlerError(t *testing.T) {
 	expectedErr := errors.New("handler failed")
-	handler := func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, args map[string]any) (any, error) {
 		return nil, expectedErr
 	}
 
@@ -414,7 +414,7 @@ func TestParameterSchema_ArrayToMap(t *testing.T) {
 		t.Error("ToMap missing description")
 	}
 
-	items := m["items"].(map[string]interface{})
+	items := m["items"].(map[string]any)
 	itemType := items["type"].(string)
 
 	if itemType != "number" {
@@ -432,7 +432,7 @@ func TestParameterSchema_Object(t *testing.T) {
 		t.Fatalf("expected type object, got %v", m["type"])
 	}
 
-	props := m["properties"].(map[string]interface{})
+	props := m["properties"].(map[string]any)
 	if _, ok := props["query"]; !ok {
 		t.Fatal("expected query property")
 	}
@@ -459,17 +459,17 @@ func TestParameterSchema_ArrayOf(t *testing.T) {
 	schema := ArrayOf(Object().WithProperty("id", String().Required()))
 	m := schema.ToMap()
 
-	items := m["items"].(map[string]interface{})
+	items := m["items"].(map[string]any)
 	if items["type"] != paramTypeObject {
 		t.Fatalf("expected items type object, got %v", items["type"])
 	}
 }
 
 func TestToolBuilder_WithJSONSchema(t *testing.T) {
-	rawSchema := map[string]interface{}{
+	rawSchema := map[string]any{
 		"type": paramTypeObject,
-		"properties": map[string]interface{}{
-			"query": map[string]interface{}{"type": "string"},
+		"properties": map[string]any{
+			"query": map[string]any{"type": "string"},
 		},
 		"required": []string{"query"},
 	}
