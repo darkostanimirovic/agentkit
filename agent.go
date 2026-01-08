@@ -1120,15 +1120,16 @@ func (a *Agent) executeToolCall(ctx context.Context, toolCall ResponseToolCall, 
 
 	// Log tool execution to span
 	if err != nil {
-		a.tracer.SetTraceAttributes(spanCtx, map[string]any{
+		a.tracer.SetSpanAttributes(spanCtx, map[string]any{
 			"error": err.Error(),
 			"tool.name": toolCall.Name,
-			"tool.output": nil,
 		})
 	} else {
-		a.tracer.SetTraceAttributes(spanCtx, map[string]any{
+		// Set the tool output on the span
+		a.tracer.SetSpanOutput(spanCtx, result)
+		// Set additional metadata
+		a.tracer.SetSpanAttributes(spanCtx, map[string]any{
 			"tool.name": toolCall.Name,
-			"tool.output": result,
 		})
 	}
 

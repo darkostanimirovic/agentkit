@@ -338,6 +338,36 @@ func (l *LangfuseTracer) SetTraceAttributes(ctx context.Context, attributes map[
 	return nil
 }
 
+// SetSpanOutput sets the output on the current span (observation)
+func (l *LangfuseTracer) SetSpanOutput(ctx context.Context, output any) error {
+	span := trace.SpanFromContext(ctx)
+	if !span.IsRecording() {
+		return nil
+	}
+
+	if output != nil {
+		outputJSON, _ := json.Marshal(output)
+		span.SetAttributes(attribute.String("langfuse.observation.output", string(outputJSON)))
+	}
+
+	return nil
+}
+
+// SetSpanAttributes sets attributes on the current span as observation metadata
+func (l *LangfuseTracer) SetSpanAttributes(ctx context.Context, attributes map[string]any) error {
+	span := trace.SpanFromContext(ctx)
+	if !span.IsRecording() {
+		return nil
+	}
+
+	for k, v := range attributes {
+		valueJSON, _ := json.Marshal(v)
+		span.SetAttributes(attribute.String(fmt.Sprintf("langfuse.observation.metadata.%s", k), string(valueJSON)))
+	}
+
+	return nil
+}
+
 // Flush ensures all pending traces are sent
 func (l *LangfuseTracer) Flush(ctx context.Context) error {
 	return l.tracerProvider.ForceFlush(ctx)

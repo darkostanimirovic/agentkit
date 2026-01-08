@@ -26,6 +26,12 @@ type Tracer interface {
 	// SetTraceAttributes sets attributes on the current trace
 	SetTraceAttributes(ctx context.Context, attributes map[string]any) error
 
+	// SetSpanOutput sets the output on the current span (observation)
+	SetSpanOutput(ctx context.Context, output any) error
+
+	// SetSpanAttributes sets attributes on the current span as observation metadata
+	SetSpanAttributes(ctx context.Context, attributes map[string]any) error
+
 	// Flush ensures all pending traces are sent (important for short-lived applications)
 	Flush(ctx context.Context) error
 }
@@ -246,6 +252,14 @@ func (n *NoOpTracer) LogEvent(ctx context.Context, name string, attributes map[s
 }
 
 func (n *NoOpTracer) SetTraceAttributes(ctx context.Context, attributes map[string]any) error {
+	return nil
+}
+
+func (n *NoOpTracer) SetSpanOutput(ctx context.Context, output any) error {
+	return nil
+}
+
+func (n *NoOpTracer) SetSpanAttributes(ctx context.Context, attributes map[string]any) error {
 	return nil
 }
 

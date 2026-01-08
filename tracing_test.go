@@ -93,7 +93,7 @@ func TestLangfuseTracer_Creation(t *testing.T) {
 				SecretKey: "sk-lf-test",
 				Enabled:   false,
 			},
-			wantErr: false, // Should return NoOpTracer
+			wantErr: true, // Returns error when disabled
 		},
 		{
 			name: "missing public key",

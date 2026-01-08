@@ -104,9 +104,21 @@ type Tracer interface {
 	LogGeneration(ctx context.Context, opts GenerationOptions) error
 	LogEvent(ctx context.Context, name string, attributes map[string]any) error
 	SetTraceAttributes(ctx context.Context, attributes map[string]any) error
+	SetSpanOutput(ctx context.Context, output any) error
+	SetSpanAttributes(ctx context.Context, attributes map[string]any) error
 	Flush(ctx context.Context) error
 }
 ```
+
+**Method Descriptions:**
+- `StartTrace`: Creates a root trace context for an agent run
+- `StartSpan`: Creates a child span within a trace (e.g., for tool execution)
+- `LogGeneration`: Records an LLM generation with input, output, and token usage
+- `LogEvent`: Records a simple point-in-time event
+- `SetTraceAttributes`: Sets trace-level metadata (applies to entire trace)
+- `SetSpanOutput`: Sets the output on the current span/observation
+- `SetSpanAttributes`: Sets observation-level metadata on the current span
+- `Flush`: Ensures all pending traces are sent to the backend
 
 ### OpenTelemetry Integration
 
@@ -119,16 +131,46 @@ Langfuse integration uses OpenTelemetry Go SDK:
 
 ### Langfuse Attribute Mapping
 
+Agentkit uses specific OpenTelemetry attributes that map to Langfuse's data model. See the [Langfuse OpenTelemetry documentation](https://langfuse.com/docs/integrations/opentelemetry#property-mapping) for full details.
+
+#### Trace-Level Attributes
+
 | OpenTelemetry Attribute | Langfuse Field | Purpose |
 |------------------------|----------------|---------|
-| `langfuse.trace.id` | Trace ID | Unique trace identifier |
-| `langfuse.trace.user_id` | User ID | End-user identifier |
-| `langfuse.trace.session_id` | Session ID | Conversation/session grouping |
+| `langfuse.user.id`, `user.id` | User ID | End-user identifier |
+| `langfuse.session.id`, `session.id` | Session ID | Conversation/session grouping |
+| `langfuse.trace.name` | Trace Name | Name of the trace |
+| `langfuse.trace.input` | Trace Input | Initial input for the trace |
+| `langfuse.trace.output` | Trace Output | Final output of the trace |
+| `langfuse.trace.metadata.*` | Metadata | Custom trace-level metadata |
+| `langfuse.version` | Version | Application version |
+| `langfuse.release` | Release | Release identifier |
+| `langfuse.environment` | Environment | Deployment environment |
+
+#### Observation-Level Attributes
+
+| OpenTelemetry Attribute | Langfuse Field | Purpose |
+|------------------------|----------------|---------|
 | `langfuse.observation.type` | Type | span, generation, event, tool, retrieval |
-| `gen_ai.system` | Model | LLM provider (e.g., "openai") |
+| `langfuse.observation.input` | Input | Input data for this operation |
+| `langfuse.observation.output` | Output | Output data from this operation |
+| `langfuse.observation.metadata.*` | Metadata | Custom observation-level metadata |
+| `langfuse.observation.model.name` | Model | LLM model name (generations only) |
+| `langfuse.observation.model.parameters` | Model Params | Model settings (generations only) |
+| `langfuse.observation.usage_details` | Token Usage | Token counts (generations only) |
+| `langfuse.observation.cost_details` | Cost | Cost breakdown (generations only) |
+| `langfuse.observation.level` | Level | DEBUG, DEFAULT, WARNING, ERROR |
+
+#### Standard GenAI Attributes (also supported)
+
+| OpenTelemetry Attribute | Langfuse Field | Purpose |
+|------------------------|----------------|---------|
 | `gen_ai.request.model` | Model Name | Model identifier (e.g., "gpt-4") |
-| `gen_ai.usage.prompt_tokens` | Tokens In | Input token count |
-| `gen_ai.usage.completion_tokens` | Tokens Out | Output token count |
+| `gen_ai.prompt` | Input | Prompt text (fallback) |
+| `gen_ai.completion` | Output | Completion text (fallback) |
+| `gen_ai.usage.input_tokens` | Tokens In | Input token count |
+| `gen_ai.usage.output_tokens` | Tokens Out | Output token count |
+| `gen_ai.usage.cost` | Cost | Total cost in USD |
 
 ## Known Issues
 
