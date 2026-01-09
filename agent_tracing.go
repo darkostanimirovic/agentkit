@@ -26,6 +26,32 @@ type chatMessage struct {
 	Content string `json:"content"`
 }
 
+// buildModelParameters creates model parameters map for tracing based on request
+func buildModelParameters(req ResponseRequest) map[string]any {
+	params := make(map[string]any)
+	
+	// For reasoning models, include reasoning.effort
+	if req.Reasoning != nil && req.Reasoning.Effort != "" {
+		params["reasoning_effort"] = req.Reasoning.Effort
+	} else {
+		// For non-reasoning models, include temperature
+		params["temperature"] = req.Temperature
+	}
+	
+	if req.TopP > 0 {
+		params["top_p"] = req.TopP
+	}
+	
+	return params
+}
+
+// buildModelParametersStream creates model parameters map for streaming tracing
+func buildModelParametersStream(req ResponseRequest) map[string]any {
+	params := buildModelParameters(req)
+	params["stream"] = true
+	return params
+}
+
 // convertInputToChatFormat converts ResponseRequest input to standard chat format
 func convertInputToChatFormat(input any) []chatMessage {
 	var messages []chatMessage
@@ -155,10 +181,7 @@ func (a *Agent) logLLMGeneration(ctx context.Context, req ResponseRequest, resp 
 		Output: output,
 		Usage:  usage,
 		Cost:   cost,
-		ModelParameters: map[string]any{
-			"temperature": req.Temperature,
-			"top_p":       req.TopP,
-		},
+		ModelParameters: buildModelParameters(req),
 		StartTime: startTime,
 		EndTime:   endTime,
 		Metadata: map[string]any{
@@ -239,11 +262,7 @@ func (a *Agent) logLLMGenerationFromStream(ctx context.Context, req ResponseRequ
 		Output: output,
 		Usage:  usage,
 		Cost:   cost,
-		ModelParameters: map[string]any{
-			"temperature": req.Temperature,
-			"top_p":       req.TopP,
-			"stream":      true,
-		},
+		ModelParameters: buildModelParametersStream(req),
 		StartTime: startTime,
 		EndTime:   endTime,
 		Metadata: map[string]any{

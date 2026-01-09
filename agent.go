@@ -32,6 +32,7 @@ type Agent struct {
 	tools             map[string]Tool
 	maxIterations     int
 	temperature       float32
+	reasoningEffort   ReasoningEffort
 	streamResponses   bool
 	retryConfig       RetryConfig
 	timeoutConfig     TimeoutConfig
@@ -54,6 +55,7 @@ type Config struct {
 	SystemPrompt          SystemPromptFunc
 	MaxIterations         int
 	Temperature           float32
+	ReasoningEffort       ReasoningEffort   // For reasoning models: ReasoningEffortNone, ReasoningEffortMinimal, ReasoningEffortLow, ReasoningEffortMedium, ReasoningEffortHigh, ReasoningEffortXHigh
 	StreamResponses       bool
 	Retry                 *RetryConfig      // Optional retry configuration
 	Timeout               *TimeoutConfig    // Optional timeout configuration
@@ -68,34 +70,17 @@ type Config struct {
 
 // Common errors for config validation
 var (
-	ErrMissingAPIKey      = errors.New("agentkit: APIKey is required")
-	ErrInvalidModel       = errors.New("agentkit: invalid or unsupported model")
-	ErrInvalidIterations  = errors.New("agentkit: MaxIterations must be between 1 and 100")
-	ErrInvalidTemperature = errors.New("agentkit: Temperature must be between 0.0 and 2.0")
+	ErrMissingAPIKey         = errors.New("agentkit: APIKey is required")
+	ErrInvalidModel          = errors.New("agentkit: invalid or unsupported model")
+	ErrInvalidIterations     = errors.New("agentkit: MaxIterations must be between 1 and 100")
+	ErrInvalidTemperature    = errors.New("agentkit: Temperature must be between 0.0 and 2.0")
+	ErrInvalidReasoningEffort = errors.New("agentkit: ReasoningEffort must be 'none', 'minimal', 'low', 'medium', 'high', or 'xhigh'")
 )
-
-// validModels contains known OpenAI model names for validation
-var validModels = map[string]bool{
-	"gpt-4o":        true,
-	"gpt-4o-mini":   true,
-	"gpt-4-turbo":   true,
-	"gpt-4":         true,
-	"gpt-3.5-turbo": true,
-	"o1":            true,
-	"o1-mini":       true,
-	"o1-preview":    true,
-	"o3-mini":       true,
-}
 
 // Validate checks if the configuration is valid
 func (c Config) Validate() error {
 	if c.APIKey == "" && c.LLMProvider == nil {
 		return ErrMissingAPIKey
-	}
-
-	// Validate model if provided
-	if c.Model != "" && !validModels[c.Model] {
-		slog.Warn("unknown model specified, may cause runtime errors", "model", c.Model)
 	}
 
 	// Validate max iterations
@@ -106,6 +91,18 @@ func (c Config) Validate() error {
 	// Validate temperature
 	if c.Temperature < 0.0 || c.Temperature > 2.0 {
 		return ErrInvalidTemperature
+	}
+
+	// Validate reasoning effort if provided
+	if c.ReasoningEffort != "" {
+		if c.ReasoningEffort != ReasoningEffortNone &&
+			c.ReasoningEffort != ReasoningEffortMinimal &&
+			c.ReasoningEffort != ReasoningEffortLow &&
+			c.ReasoningEffort != ReasoningEffortMedium &&
+			c.ReasoningEffort != ReasoningEffortHigh &&
+			c.ReasoningEffort != ReasoningEffortXHigh {
+			return ErrInvalidReasoningEffort
+		}
 	}
 
 	return nil
@@ -192,6 +189,7 @@ func New(cfg Config) (*Agent, error) {
 		tools:             make(map[string]Tool),
 		maxIterations:     cfg.MaxIterations,
 		temperature:       cfg.Temperature,
+		reasoningEffort:   cfg.ReasoningEffort,
 		streamResponses:   cfg.StreamResponses,
 		retryConfig:       retryConfig,
 		timeoutConfig:     timeoutConfig,
@@ -562,12 +560,20 @@ func (a *Agent) buildResponseRequest(systemPrompt string, responseTools []Respon
 	req := ResponseRequest{
 		Model:              a.model,
 		Instructions:       systemPrompt,
-		Temperature:        a.temperature,
 		Tools:              responseTools,
 		ToolChoice:         "auto",
 		ParallelToolCalls:  true,
 		Store:              true,
 		PreviousResponseID: previousResponseID,
+	}
+
+	// If reasoning effort is specified, use it; otherwise use temperature
+	if a.reasoningEffort != "" {
+		req.Reasoning = &ResponseReasoning{
+			Effort: a.reasoningEffort,
+		}
+	} else {
+		req.Temperature = a.temperature
 	}
 
 	if previousResponseID == "" {

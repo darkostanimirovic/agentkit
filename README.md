@@ -124,14 +124,30 @@ if err != nil {
 }
 ```
 
+**For reasoning models, use `ReasoningEffort` instead of `Temperature`:**
+
+```go
+agent, err := agentkit.New(agentkit.Config{
+    APIKey:          os.Getenv("OPENAI_API_KEY"),
+    Model:           "o1-mini",
+    SystemPrompt:    buildPrompt,
+    MaxIterations:   5,
+    ReasoningEffort: agentkit.ReasoningEffortHigh, // none, minimal, low, medium, high, or xhigh
+    StreamResponses: true,
+})
+```
+
+> **Note**: If you specify `ReasoningEffort`, it will be used instead of `Temperature`. Only set one or the other based on your model's capabilities.
+
 ### Configuration
 
 Key `Config` fields (all optional unless noted):
 
 - `APIKey` (required unless `LLMProvider` is set)
-- `Model` (validated; unknown models log a warning)
+- `Model` (any OpenAI model name)
 - `SystemPrompt` (func that builds instructions from context)
-- `MaxIterations`, `Temperature`
+- `MaxIterations`, `Temperature` (for GPT models)
+- `ReasoningEffort` (for reasoning models: use constants `ReasoningEffortNone`, `ReasoningEffortMinimal`, `ReasoningEffortLow`, `ReasoningEffortMedium`, `ReasoningEffortHigh`, or `ReasoningEffortXHigh`; if set, `Temperature` is ignored)
 - `StreamResponses` (stream SSE events vs. single response)
 - `Retry`, `Timeout` (see sections below)
 - `ConversationStore`, `Approval`

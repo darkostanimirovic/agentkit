@@ -452,6 +452,69 @@ func TestConfigValidation(t *testing.T) {
 			wantErr: ErrInvalidTemperature,
 		},
 		{
+			name: "invalid reasoning effort",
+			config: Config{
+				APIKey:          "test-key",
+				Model:           "o1-mini",
+				ReasoningEffort: "invalid",
+			},
+			wantErr: ErrInvalidReasoningEffort,
+		},
+		{
+			name: "valid reasoning effort - none",
+			config: Config{
+				APIKey:          "test-key",
+				Model:           "o1-mini",
+				ReasoningEffort: ReasoningEffortNone,
+			},
+			wantErr: nil,
+		},
+		{
+			name: "valid reasoning effort - minimal",
+			config: Config{
+				APIKey:          "test-key",
+				Model:           "o1-mini",
+				ReasoningEffort: ReasoningEffortMinimal,
+			},
+			wantErr: nil,
+		},
+		{
+			name: "valid reasoning effort - low",
+			config: Config{
+				APIKey:          "test-key",
+				Model:           "o1-mini",
+				ReasoningEffort: ReasoningEffortLow,
+			},
+			wantErr: nil,
+		},
+		{
+			name: "valid reasoning effort - medium",
+			config: Config{
+				APIKey:          "test-key",
+				Model:           "o1-mini",
+				ReasoningEffort: ReasoningEffortMedium,
+			},
+			wantErr: nil,
+		},
+		{
+			name: "valid reasoning effort - high",
+			config: Config{
+				APIKey:          "test-key",
+				Model:           "o1-mini",
+				ReasoningEffort: ReasoningEffortHigh,
+			},
+			wantErr: nil,
+		},
+		{
+			name: "valid reasoning effort - xhigh",
+			config: Config{
+				APIKey:          "test-key",
+				Model:           "o1-mini",
+				ReasoningEffort: ReasoningEffortXHigh,
+			},
+			wantErr: nil,
+		},
+		{
 			name: "valid config",
 			config: Config{
 				APIKey:        "test-key",

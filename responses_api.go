@@ -18,6 +18,24 @@ const (
 	responsesEndpoint = "https://api.openai.com/v1/responses"
 )
 
+// ReasoningEffort controls the reasoning strength for reasoning models (o1/o3)
+type ReasoningEffort string
+
+const (
+	// ReasoningEffortNone disables reasoning entirely (best for low-latency tasks)
+	ReasoningEffortNone ReasoningEffort = "none"
+	// ReasoningEffortMinimal generates very few reasoning tokens for fast time-to-first-token
+	ReasoningEffortMinimal ReasoningEffort = "minimal"
+	// ReasoningEffortLow favors speed and economical token usage
+	ReasoningEffortLow ReasoningEffort = "low"
+	// ReasoningEffortMedium provides balanced reasoning depth and speed (default)
+	ReasoningEffortMedium ReasoningEffort = "medium"
+	// ReasoningEffortHigh allocates significant computational depth for complex problems
+	ReasoningEffortHigh ReasoningEffort = "high"
+	// ReasoningEffortXHigh allocates the largest possible portion of tokens for reasoning (newest models)
+	ReasoningEffortXHigh ReasoningEffort = "xhigh"
+)
+
 // ResponsesClient wraps OpenAI's Responses API
 type ResponsesClient struct {
 	apiKey     string
@@ -87,6 +105,11 @@ type ResponseToolFunction struct {
 	Name string `json:"name"`
 }
 
+// ResponseReasoning represents reasoning configuration for reasoning models
+type ResponseReasoning struct {
+	Effort ReasoningEffort `json:"effort,omitempty"`
+}
+
 // ResponseTool represents a tool definition for Responses API
 // Note: In Responses API, name/description/parameters are at top level, not nested
 type ResponseTool struct {
@@ -98,11 +121,13 @@ type ResponseTool struct {
 }
 
 // ResponseRequest represents a request to create a response
+// Note: For reasoning models (gpt-5, o-series), set Reasoning.Effort instead of Temperature.
+// Temperature is ignored for reasoning models.
 type ResponseRequest struct {
 	Model              string              `json:"model"`
 	Input              any         `json:"input,omitempty"` // string or []ResponseInput
 	Instructions       string              `json:"instructions,omitempty"`
-	Temperature        float32             `json:"temperature,omitempty"`
+	Temperature        float32             `json:"temperature,omitempty"`        // For GPT models only (ignored for o1/o3)
 	MaxOutputTokens    int                 `json:"max_output_tokens,omitempty"`
 	Tools              []ResponseTool      `json:"tools,omitempty"`
 	ToolChoice         any         `json:"tool_choice,omitempty"` // string or ResponseToolChoice
@@ -110,9 +135,10 @@ type ResponseRequest struct {
 	Store              bool                `json:"store,omitempty"`
 	PreviousResponseID string              `json:"previous_response_id,omitempty"`
 	ParallelToolCalls  bool                `json:"parallel_tool_calls,omitempty"`
-	TopP               float32             `json:"top_p,omitempty"`
-	Text               *ResponseTextConfig `json:"text,omitempty"`
-	Metadata           map[string]string   `json:"metadata,omitempty"`
+	TopP               float32              `json:"top_p,omitempty"`
+	Text               *ResponseTextConfig  `json:"text,omitempty"`
+	Metadata           map[string]string    `json:"metadata,omitempty"`
+	Reasoning          *ResponseReasoning   `json:"reasoning,omitempty"` // For reasoning models (gpt-5/o-series): use ResponseReasoning with effort
 }
 
 // ResponseObject represents a response from the API
