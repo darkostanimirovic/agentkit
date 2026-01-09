@@ -216,24 +216,31 @@ func (l *LangfuseTracer) LogGeneration(ctx context.Context, opts GenerationOptio
 	// Set observation type as generation
 	span.SetAttributes(attribute.String("langfuse.observation.type", string(SpanTypeGeneration)))
 
-	// Set model information
-	span.SetAttributes(attribute.String("langfuse.observation.model.name", opts.Model))
-	span.SetAttributes(attribute.String("gen_ai.request.model", opts.Model))
+	// Set model information using Langfuse-specific attribute
+	// Per docs: langfuse.observation.model.name takes precedence
+	if opts.Model != "" {
+		span.SetAttributes(attribute.String("langfuse.observation.model.name", opts.Model))
+		// Also set OpenTelemetry GenAI semantic convention
+		span.SetAttributes(attribute.String("gen_ai.request.model", opts.Model))
+	}
 
 	// Set model parameters
+	// Per docs: langfuse.observation.model.parameters should be a JSON string
 	if opts.ModelParameters != nil {
 		paramsJSON, _ := json.Marshal(opts.ModelParameters)
 		span.SetAttributes(attribute.String("langfuse.observation.model.parameters", string(paramsJSON)))
 	}
 
-	// Set input
+	// Set input - Langfuse expects a JSON string
+	// Per docs: langfuse.observation.input and gen_ai.prompt are both supported
 	if opts.Input != nil {
 		inputJSON, _ := json.Marshal(opts.Input)
 		span.SetAttributes(attribute.String("langfuse.observation.input", string(inputJSON)))
 		span.SetAttributes(attribute.String("gen_ai.prompt", string(inputJSON)))
 	}
 
-	// Set output
+	// Set output - Langfuse expects a JSON string
+	// Per docs: langfuse.observation.output and gen_ai.completion are both supported
 	if opts.Output != nil {
 		outputJSON, _ := json.Marshal(opts.Output)
 		span.SetAttributes(attribute.String("langfuse.observation.output", string(outputJSON)))
@@ -241,26 +248,29 @@ func (l *LangfuseTracer) LogGeneration(ctx context.Context, opts GenerationOptio
 	}
 
 	// Set usage information
+	// Per docs: both langfuse.observation.usage_details (JSON string) and gen_ai.usage.* (integers) are supported
 	if opts.Usage != nil {
+		// Set individual OpenTelemetry GenAI attributes
+		span.SetAttributes(
+			attribute.Int("gen_ai.usage.input_tokens", opts.Usage.PromptTokens),
+			attribute.Int("gen_ai.usage.output_tokens", opts.Usage.CompletionTokens),
+		)
+		// Set Langfuse usage_details as JSON with correct keys: input, output, total
 		usageDetails := map[string]int{
-			"prompt_tokens":     opts.Usage.PromptTokens,
-			"completion_tokens": opts.Usage.CompletionTokens,
-			"total_tokens":      opts.Usage.TotalTokens,
+			"input":  opts.Usage.PromptTokens,
+			"output": opts.Usage.CompletionTokens,
+			"total":  opts.Usage.TotalTokens,
 		}
 		usageJSON, _ := json.Marshal(usageDetails)
 		span.SetAttributes(attribute.String("langfuse.observation.usage_details", string(usageJSON)))
-
-		// Also set OpenTelemetry standard attributes
-		span.SetAttributes(attribute.Int("gen_ai.usage.input_tokens", opts.Usage.PromptTokens))
-		span.SetAttributes(attribute.Int("gen_ai.usage.output_tokens", opts.Usage.CompletionTokens))
 	}
 
 	// Set cost information
 	if opts.Cost != nil {
 		costDetails := map[string]float64{
-			"prompt":     opts.Cost.PromptCost,
-			"completion": opts.Cost.CompletionCost,
-			"total":      opts.Cost.TotalCost,
+			"input":  opts.Cost.PromptCost,
+			"output": opts.Cost.CompletionCost,
+			"total":  opts.Cost.TotalCost,
 		}
 		costJSON, _ := json.Marshal(costDetails)
 		span.SetAttributes(attribute.String("langfuse.observation.cost_details", string(costJSON)))

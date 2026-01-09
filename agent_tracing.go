@@ -20,6 +20,76 @@ type llmCallTimingContextKey string
 
 const llmCallTimingKey llmCallTimingContextKey = "agentkit.llmCallTiming"
 
+// chatMessage represents a standard OpenAI chat message format
+type chatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// convertInputToChatFormat converts ResponseRequest input to standard chat format
+func convertInputToChatFormat(input any) []chatMessage {
+	var messages []chatMessage
+
+	switch v := input.(type) {
+	case []ResponseInput:
+		for _, item := range v {
+			msg := chatMessage{
+				Role: item.Role,
+			}
+			// Extract text from content blocks
+			for _, content := range item.Content {
+				if content.Type == "input_text" && content.Text != "" {
+					msg.Content += content.Text
+				}
+			}
+			if msg.Content != "" {
+				messages = append(messages, msg)
+			}
+		}
+	case []ResponseContentItem:
+		// For tool responses (continuation calls)
+		for _, item := range v {
+			if item.Type == "function_call_output" {
+				messages = append(messages, chatMessage{
+					Role:    "tool",
+					Content: item.Output,
+				})
+			}
+		}
+	case string:
+		messages = append(messages, chatMessage{
+			Role:    "user",
+			Content: v,
+		})
+	}
+
+	return messages
+}
+
+// convertOutputToChatFormat converts ResponseOutputItem to standard chat format
+func convertOutputToChatFormat(output []ResponseOutputItem) []chatMessage {
+	var messages []chatMessage
+
+	for _, item := range output {
+		if item.Type == messageType && item.Role == "assistant" {
+			msg := chatMessage{
+				Role: item.Role,
+			}
+			// Extract text from content blocks
+			for _, content := range item.Content {
+				if content.Type == outputTextType && content.Text != "" {
+					msg.Content += content.Text
+				}
+			}
+			if msg.Content != "" {
+				messages = append(messages, msg)
+			}
+		}
+	}
+
+	return messages
+}
+
 // startLLMCallTiming records the start time of an LLM call in the context
 func startLLMCallTiming(ctx context.Context) context.Context {
 	timing := &llmCallTiming{
@@ -55,31 +125,10 @@ func (a *Agent) logLLMGeneration(ctx context.Context, req ResponseRequest, resp 
 		startTime = endTime.Add(-time.Second)
 	}
 
-	// Extract input prompt from req.Input
-	var inputText string
-	if inputs, ok := req.Input.([]ResponseInput); ok {
-		for _, input := range inputs {
-			for _, content := range input.Content {
-				if content.Type == "input_text" && content.Text != "" {
-					inputText += content.Text + "\n"
-				}
-			}
-		}
-	} else if str, ok := req.Input.(string); ok {
-		inputText = str
-	}
-
-	// Extract output text
-	var outputText string
-	for _, output := range resp.Output {
-		if output.Type == messageType && output.Role == "assistant" {
-			for _, content := range output.Content {
-				if content.Type == outputTextType && content.Text != "" {
-					outputText += content.Text
-				}
-			}
-		}
-	}
+	// Convert to standard chat format for Langfuse
+	// Langfuse expects OpenAI chat messages format: [{role, content}]
+	input := convertInputToChatFormat(req.Input)
+	output := convertOutputToChatFormat(resp.Output)
 
 	// Extract usage info from OpenAI API response
 	// OpenAI provides token counts but NOT cost information
@@ -102,8 +151,8 @@ func (a *Agent) logLLMGeneration(ctx context.Context, req ResponseRequest, resp 
 	genOpts := GenerationOptions{
 		Name:   "llm.generate",
 		Model:  a.model,
-		Input:  inputText,
-		Output: outputText,
+		Input:  input,
+		Output: output,
 		Usage:  usage,
 		Cost:   cost,
 		ModelParameters: map[string]any{
@@ -151,22 +200,19 @@ func (a *Agent) logLLMGenerationFromStream(ctx context.Context, req ResponseRequ
 		startTime = endTime.Add(-time.Second)
 	}
 
-	// Extract input prompt from req.Input
-	var inputText string
-	if inputs, ok := req.Input.([]ResponseInput); ok {
-		for _, input := range inputs {
-			for _, content := range input.Content {
-				if content.Type == "input_text" && content.Text != "" {
-					inputText += content.Text + "\n"
-				}
-			}
-		}
-	} else if str, ok := req.Input.(string); ok {
-		inputText = str
-	}
+	// Convert to standard chat format for Langfuse
+	input := convertInputToChatFormat(req.Input)
 
-	// Use accumulated final text as output
-	outputText := state.finalText
+	// For streaming, construct output in chat format
+	var output []chatMessage
+	if state.finalText != "" {
+		output = []chatMessage{
+			{
+				Role:    "assistant",
+				Content: state.finalText,
+			},
+		}
+	}
 
 	// Extract usage from stream state (captured from final response.done chunk)
 	// OpenAI provides token counts in the final stream chunk
@@ -189,8 +235,8 @@ func (a *Agent) logLLMGenerationFromStream(ctx context.Context, req ResponseRequ
 	genOpts := GenerationOptions{
 		Name:   "llm.generate.stream",
 		Model:  a.model,
-		Input:  inputText,
-		Output: outputText,
+		Input:  input,
+		Output: output,
 		Usage:  usage,
 		Cost:   cost,
 		ModelParameters: map[string]any{
