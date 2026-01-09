@@ -30,6 +30,49 @@ func SchemaFromStruct(sample any) (map[string]any, error) {
 	return schemaFromStructType(typeOf, map[reflect.Type]struct{}{})
 }
 
+// StructToSchema converts a Go struct type to a ParameterSchema using reflection.
+// It supports struct tags: `json`, `required`, `desc`, `enum`, `default`.
+// This is useful for defining complex parameter schemas without manual WithProperty chains.
+//
+// Supported struct tags:
+//   - json: field name (use "-" to skip field)
+//   - required: "true" marks field as required
+//   - desc: field description
+//   - enum: comma-separated allowed values
+//   - default: default value
+//
+// Example:
+//
+//	type Filters struct {
+//	    EmailDomain string `json:"email_domain" desc:"Filter by email domain"`
+//	    Status      string `json:"status" required:"true" enum:"active,inactive"`
+//	    AgeRange    struct {
+//	        Min int `json:"min" desc:"Minimum age"`
+//	        Max int `json:"max" desc:"Maximum age"`
+//	    } `json:"age_range"`
+//	}
+//
+//	schema, _ := agentkit.StructToSchema[Filters]()
+//	tool := agentkit.NewTool("search").
+//	    WithParameter("filters", schema).
+//	    Build()
+func StructToSchema[T any]() (*ParameterSchema, error) {
+	var zero T
+	schemaMap, err := SchemaFromStruct(zero)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create a ParameterSchema with the raw schema map
+	ps := &ParameterSchema{
+		paramType: "object",
+		rawSchema: schemaMap,
+		required:  true,
+	}
+	
+	return ps, nil
+}
+
 // NewStructTool creates a tool builder using a struct type for schema and decoding.
 func NewStructTool[T any](name string, handler func(context.Context, T) (any, error)) (*ToolBuilder, error) {
 	var zero T
@@ -94,16 +137,35 @@ func schemaFromStructType(t reflect.Type, visited map[reflect.Type]struct{}) (ma
 			schema["default"] = def
 		}
 
+		// For optional fields in strict mode, convert to anyOf with null
+		fieldRequired := isRequired(field, omitEmpty)
+		if !fieldRequired {
+			// Move description out before wrapping in anyOf
+			desc := schema["description"]
+			delete(schema, "description")
+			
+			schema = map[string]any{
+				"anyOf": []map[string]any{
+					schema,
+					{"type": "null"},
+				},
+			}
+			if desc != nil {
+				schema["description"] = desc
+			}
+		}
+
 		properties[name] = schema
 
-		if isRequired(field, omitEmpty) {
-			required = append(required, name)
-		}
+		// In strict mode, all fields must be in required array
+		// (optional fields use anyOf with null instead)
+		required = append(required, name)
 	}
 
 	result := map[string]any{
-		"type":       "object",
-		"properties": properties,
+		"type":                 "object",
+		"properties":           properties,
+		"additionalProperties": false, // Required for OpenAI Structured Outputs
 	}
 	if len(required) > 0 {
 		result["required"] = required

@@ -190,12 +190,12 @@ tool := agentkit.NewTool("assign_team").
 
 ### Struct-Based Tools
 
-Generate tool schemas from Go structs and get typed handler input.
+Generate tool schemas from Go structs and get typed handler input. Structured Outputs are enabled by default.
 
 ```go
 type SearchParams struct {
     Query  string   `json:"query" required:"true" desc:"Search query"`
-    Labels []string `json:"labels"`
+    Labels []string `json:"labels" desc:"Optional filter labels"`
     Limit  int      `json:"limit" default:"10"`
 }
 
@@ -209,6 +209,62 @@ tool := toolBuilder.Build()
 agent.AddTool(tool)
 ```
 
+### OpenAI Structured Outputs
+
+AgentKit automatically enables **OpenAI Structured Outputs** for all tools by default. This ensures the model's output always matches your schema exactly, with guaranteed type-safety and no hallucinated fields.
+
+**Key features:**
+- ✅ All tools use `strict: true` by default
+- ✅ Automatic `additionalProperties: false` for all objects
+- ✅ Optional fields use `anyOf` with `null` type
+- ✅ All parameter names are in the `required` array (with null unions for optional)
+
+**Two ways to define schemas:**
+
+#### 1. StructToSchema (Recommended for complex schemas)
+
+Use Go structs with tags to automatically generate schemas. Supports nested objects, enums, descriptions, and more.
+
+```go
+type SearchFilters struct {
+    EmailDomain string `json:"email_domain" desc:"Filter by email domain"`
+    Status      string `json:"status" required:"true" enum:"active,inactive" desc:"User status"`
+    AgeRange    struct {
+        Min int `json:"min" desc:"Minimum age"`
+        Max int `json:"max" desc:"Maximum age"`
+    } `json:"age_range"`
+}
+
+filtersSchema, _ := agentkit.StructToSchema[SearchFilters]()
+tool := agentkit.NewTool("search_users").
+    WithParameter("filters", filtersSchema).
+    Build()
+```
+
+**Supported struct tags:**
+- `json`: Field name (use `"-"` to skip field)
+- `required:"true"`: Mark field as required (omit for optional fields)
+- `desc`: Field description
+- `enum`: Comma-separated allowed values
+- `default`: Default value
+
+#### 2. Fluent API (Good for simple inline schemas)
+
+```go
+// Structured Outputs enabled by default
+tool := agentkit.NewTool("create_user").
+    WithParameter("name", agentkit.String().Required()).
+    WithParameter("email", agentkit.String().Required()).
+    WithParameter("nickname", agentkit.String().Optional()). // Uses anyOf with null
+    Build()
+
+// Disable strict mode only if needed (not recommended)
+tool := agentkit.NewTool("legacy_tool").
+    WithParameter("data", agentkit.String()).
+    WithStrictMode(false). // Disables Structured Outputs
+    Build()
+```
+
 ### Complex Schemas
 
 ```go
@@ -218,13 +274,23 @@ tool := agentkit.NewTool("complex_search").
         WithProperty("labels", agentkit.Array("string")).
         WithProperty("assignee", agentkit.Object().
             WithProperty("id", agentkit.String().Required()).
-            WithProperty("name", agentkit.String().Optional()),
+            WithProperty("name", agentkit.String().Optional()), // Nested optional field
         ).
         Required(),
     ).
     Build()
 
-tool = agentkit.NewTool("advanced").
+// Array of complex objects
+tool := agentkit.NewTool("batch_update").
+    WithParameter("users", agentkit.ArrayOf(
+        agentkit.Object().
+            WithProperty("id", agentkit.String().Required()).
+            WithProperty("name", agentkit.String().Required()),
+    ).Required()).
+    Build()
+
+// Raw JSON Schema for maximum control
+tool := agentkit.NewTool("advanced").
     WithJSONSchema(myJSONSchema).
     Build()
 ```
@@ -609,10 +675,12 @@ agent, _ := agentkit.New(agentkit.Config{
 - `NewTool(name string) *ToolBuilder` - Start building a tool
 - `NewStructTool(name string, handler)` - Build from struct tags
 - `SchemaFromStruct(sample any)` - Generate JSON schema from struct tags
+- `StructToSchema[T any]() (*ParameterSchema, error)` - Convert struct type to ParameterSchema (recommended)
 - `WithDescription(desc string)` - Set tool description
 - `WithParameter(name string, schema ParameterSchema)` - Add parameter
 - `WithJSONSchema(schema map[string]any)` - Set raw JSON schema
 - `WithConcurrency(mode ConcurrencyMode)` - Control parallel execution
+- `WithStrictMode(strict bool)` - Enable/disable OpenAI Structured Outputs (default: true)
 - `WithHandler(handler ToolHandler)` - Set execution handler
 - `Build() Tool` - Construct the tool
 
@@ -622,10 +690,14 @@ agent, _ := agentkit.New(agentkit.Config{
 - `Array(itemType string)` - Array parameter
 - `ArrayOf(itemSchema *ParameterSchema)` - Array of complex items
 - `Object()` - Object schema builder
+- `StructToSchema[T any]()` - Generate schema from Go struct with tags
+- `WithProperty(name string, schema *ParameterSchema)` - Add object property
 - `WithDescription(desc string)` - Add description
 - `Required()` - Mark as required
-- `Optional()` - Mark as optional
+- `Optional()` - Mark as optional (uses anyOf with null in strict mode)
 - `WithEnum(values ...string)` - Restrict to enum values
+- `ToMap()` - Convert to map for OpenAI (no strict mode wrapping)
+- `ToMapStrict()` - Convert with strict mode (anyOf for optional fields)
 
 ### Parallel Tool Execution
 

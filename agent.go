@@ -11,8 +11,6 @@ import (
 	"log/slog"
 	"sync"
 	"time"
-
-	openai "github.com/sashabaranov/go-openai"
 )
 
 const (
@@ -535,11 +533,32 @@ func (a *Agent) buildSystemPrompt(ctx context.Context) string {
 }
 
 func (a *Agent) buildResponseTools() []ResponseTool {
-	openaiTools := make([]openai.Tool, 0, len(a.tools))
+	responseTools := make([]ResponseTool, 0, len(a.tools))
 	for _, tool := range a.tools {
-		openaiTools = append(openaiTools, tool.ToOpenAI())
+		openaiTool := tool.ToOpenAI()
+		
+		// Convert to ResponseTool with strict mode based on tool configuration
+		var params map[string]any
+		if openaiTool.Function.Parameters != nil {
+			if p, ok := openaiTool.Function.Parameters.(map[string]any); ok {
+				params = p
+			} else {
+				// Try to marshal and unmarshal to convert
+				if data, err := json.Marshal(openaiTool.Function.Parameters); err == nil {
+					_ = json.Unmarshal(data, &params)
+				}
+			}
+		}
+		
+		responseTools = append(responseTools, ResponseTool{
+			Type:        string(openaiTool.Type),
+			Name:        openaiTool.Function.Name,
+			Description: openaiTool.Function.Description,
+			Parameters:  params,
+			Strict:      tool.strict,
+		})
 	}
-	return ConvertOpenAIToolsToResponseTools(openaiTools)
+	return responseTools
 }
 
 func buildInitialInput(userMessage string) []ResponseInput {

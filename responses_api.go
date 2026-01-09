@@ -433,6 +433,13 @@ func (s *ResponseStream) Close() error {
 
 // ConvertOpenAIToolsToResponseTools converts OpenAI tools to Response API tools
 func ConvertOpenAIToolsToResponseTools(tools []openai.Tool) []ResponseTool {
+	return ConvertOpenAIToolsToResponseToolsWithStrict(tools, true)
+}
+
+// ConvertOpenAIToolsToResponseToolsWithStrict converts OpenAI tools to Response API tools
+// with control over strict mode. When strict is true, enables OpenAI Structured Outputs
+// for guaranteed schema adherence.
+func ConvertOpenAIToolsToResponseToolsWithStrict(tools []openai.Tool, strict bool) []ResponseTool {
 	result := make([]ResponseTool, len(tools))
 	for i, tool := range tools {
 		// Convert parameters with type assertion
@@ -454,6 +461,7 @@ func ConvertOpenAIToolsToResponseTools(tools []openai.Tool) []ResponseTool {
 			Name:        tool.Function.Name,
 			Description: tool.Function.Description,
 			Parameters:  params,
+			Strict:      strict,
 		}
 	}
 	return result

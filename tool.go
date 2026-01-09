@@ -28,6 +28,7 @@ type Tool struct {
 	pendingFormatter PendingFormatter
 	resultFormatter  ResultFormatter
 	concurrency      ConcurrencyMode
+	strict           bool // Enable OpenAI Structured Outputs (strict schema validation)
 }
 
 // ToolBuilder helps construct tools with a fluent API
@@ -42,6 +43,7 @@ func NewTool(name string) *ToolBuilder {
 			name:        name,
 			parameters:  map[string]any{},
 			concurrency: ConcurrencyParallel,
+			strict:      true, // Enable Structured Outputs by default
 		},
 	}
 }
@@ -56,19 +58,20 @@ func (tb *ToolBuilder) WithDescription(desc string) *ToolBuilder {
 func (tb *ToolBuilder) WithParameter(name string, schema *ParameterSchema) *ToolBuilder {
 	if tb.tool.parameters["properties"] == nil {
 		tb.tool.parameters = map[string]any{
-			"type":       "object",
-			"properties": map[string]any{},
-			"required":   []string{},
+			"type":                 "object",
+			"properties":           map[string]any{},
+			"required":             []string{},
+			"additionalProperties": false, // Required for OpenAI Structured Outputs
 		}
 	}
 
 	props := tb.tool.parameters["properties"].(map[string]any)
-	props[name] = schema.ToMap()
+	props[name] = schema.ToMapStrict()
 
-	if schema.required {
-		required := tb.tool.parameters["required"].([]string)
-		tb.tool.parameters["required"] = append(required, name)
-	}
+	// In strict mode, all parameters must be in required array
+	// (optional parameters use anyOf with null instead)
+	required := tb.tool.parameters["required"].([]string)
+	tb.tool.parameters["required"] = append(required, name)
 
 	return tb
 }
@@ -108,6 +111,15 @@ func (tb *ToolBuilder) WithConcurrency(mode ConcurrencyMode) *ToolBuilder {
 		mode = ConcurrencyParallel
 	}
 	tb.tool.concurrency = mode
+	return tb
+}
+
+// WithStrictMode enables or disables OpenAI Structured Outputs for this tool.
+// When true (default), the tool schema uses strict JSON Schema validation,
+// ensuring the model output always matches the schema exactly.
+// Disable only if you need to use JSON Schema features not supported by strict mode.
+func (tb *ToolBuilder) WithStrictMode(strict bool) *ToolBuilder {
+	tb.tool.strict = strict
 	return tb
 }
 
@@ -214,6 +226,7 @@ type ParameterSchema struct {
 	enum        []string
 	items       map[string]any
 	properties  map[string]*ParameterSchema
+	rawSchema   map[string]any // For struct-generated schemas
 }
 
 const (
@@ -239,7 +252,25 @@ func Array(itemType string) *ParameterSchema {
 func ArrayOf(itemSchema *ParameterSchema) *ParameterSchema {
 	items := map[string]any{}
 	if itemSchema != nil {
-		items = itemSchema.ToMap()
+		// For array items, we want the schema directly without anyOf wrapping
+		// even if the item schema isn't marked as required
+		items = itemSchema.toMapInternal(false)
+		// But we still want additionalProperties: false for objects in strict mode
+		if itemSchema.paramType == paramTypeObject && len(itemSchema.properties) > 0 {
+			// Re-add strict mode requirements for object items
+			props := make(map[string]any, len(itemSchema.properties))
+			allRequired := make([]string, 0, len(itemSchema.properties))
+			for name, schema := range itemSchema.properties {
+				if schema == nil {
+					continue
+				}
+				props[name] = schema.toMapInternal(true)
+				allRequired = append(allRequired, name)
+			}
+			items["properties"] = props
+			items["required"] = allRequired
+			items["additionalProperties"] = false
+		}
 	}
 
 	return &ParameterSchema{
@@ -294,6 +325,35 @@ func (ps *ParameterSchema) WithEnum(values ...string) *ParameterSchema {
 
 // ToMap converts the schema to a map for OpenAI
 func (ps *ParameterSchema) ToMap() map[string]any {
+	return ps.toMapInternal(false) // Don't apply strict mode wrapping for standalone schemas
+}
+
+// ToMapStrict converts the schema to a map with strict mode enabled
+// This wraps optional fields in anyOf with null and ensures all constraints are met
+func (ps *ParameterSchema) ToMapStrict() map[string]any {
+	return ps.toMapInternal(true)
+}
+
+// toMapInternal converts the schema with control over strict mode handling
+func (ps *ParameterSchema) toMapInternal(strictMode bool) map[string]any {
+	// If rawSchema is set (from struct generation), use it directly
+	if ps.rawSchema != nil {
+		return ps.rawSchema
+	}
+	
+	// Handle optional fields in strict mode by converting to anyOf with null
+	if strictMode && !ps.required && ps.paramType != "" {
+		baseSchema := ps.toMapInternal(false)
+		delete(baseSchema, "required") // Remove required field from base schema
+		return map[string]any{
+			"anyOf": []map[string]any{
+				baseSchema,
+				{"type": "null"},
+			},
+			"description": ps.description,
+		}
+	}
+
 	m := map[string]any{
 		"type": ps.paramType,
 	}
@@ -318,15 +378,27 @@ func (ps *ParameterSchema) ToMap() map[string]any {
 			if schema == nil {
 				continue
 			}
-			props[name] = schema.ToMap()
+			props[name] = schema.toMapInternal(strictMode)
 			if schema.required {
 				required = append(required, name)
 			}
 		}
 
 		m["properties"] = props
-		if len(required) > 0 {
+		// In strict mode, all fields must be in required array
+		if strictMode {
+			// Add all property names to required array
+			allRequired := make([]string, 0, len(ps.properties))
+			for name := range ps.properties {
+				allRequired = append(allRequired, name)
+			}
+			m["required"] = allRequired
+		} else if len(required) > 0 {
 			m["required"] = required
+		}
+		// Add additionalProperties: false for strict mode compliance
+		if strictMode {
+			m["additionalProperties"] = false
 		}
 	}
 

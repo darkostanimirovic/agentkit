@@ -34,8 +34,27 @@ func TestSchemaFromStruct(t *testing.T) {
 	}
 
 	required := schema["required"].([]string)
-	if len(required) != 1 || required[0] != requiredQueryField {
-		t.Fatalf("expected required [%s], got %v", requiredQueryField, required)
+	// In strict mode, all fields are in required array (optional ones use anyOf with null)
+	if len(required) != 2 {
+		t.Fatalf("expected 2 fields in required array, got %v", required)
+	}
+	
+	// Check that query is in the required array
+	hasQuery := false
+	for _, field := range required {
+		if field == requiredQueryField {
+			hasQuery = true
+			break
+		}
+	}
+	if !hasQuery {
+		t.Fatalf("expected %s to be in required array", requiredQueryField)
+	}
+	
+	// Check that limit is wrapped in anyOf with null
+	limit := props["limit"].(map[string]any)
+	if _, hasAnyOf := limit["anyOf"]; !hasAnyOf {
+		t.Error("expected optional limit field to have anyOf")
 	}
 }
 
@@ -47,8 +66,29 @@ func TestSchemaFromStruct_Nested(t *testing.T) {
 
 	props := schema["properties"].(map[string]any)
 	filters := props["filters"].(map[string]any)
-	if filters["type"] != paramTypeObject {
-		t.Fatalf("expected nested object, got %v", filters["type"])
+	
+	// Since Filters field is not required, it's wrapped in anyOf with null
+	anyOf, ok := filters["anyOf"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected anyOf for optional nested object, got %v", filters)
+	}
+	
+	// Find the object schema in anyOf
+	var objSchema map[string]any
+	for _, schema := range anyOf {
+		if schema["type"] == paramTypeObject {
+			objSchema = schema
+			break
+		}
+	}
+	
+	if objSchema == nil {
+		t.Fatal("expected object schema in anyOf")
+	}
+	
+	// Check that the nested object has additionalProperties: false
+	if objSchema["additionalProperties"] != false {
+		t.Error("expected nested object to have additionalProperties: false")
 	}
 }
 

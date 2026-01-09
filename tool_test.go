@@ -69,9 +69,17 @@ func TestToolBuilder_WithParameter_Optional(t *testing.T) {
 		WithParameter("optional_field", String().Optional()).
 		Build()
 
+	// In strict mode, all fields are in required array (optional ones use anyOf with null)
 	required := tool.parameters["required"].([]string)
-	if len(required) != 0 {
-		t.Errorf("expected no required params, got %v", required)
+	if len(required) != 1 {
+		t.Errorf("expected 1 param in required array, got %v", required)
+	}
+	
+	// Check that the optional field uses anyOf with null
+	props := tool.parameters["properties"].(map[string]any)
+	optField := props["optional_field"].(map[string]any)
+	if _, hasAnyOf := optField["anyOf"]; !hasAnyOf {
+		t.Error("expected optional field to have anyOf")
 	}
 }
 
@@ -111,23 +119,26 @@ func TestToolBuilder_MultipleParameters(t *testing.T) {
 		t.Errorf("expected 3 properties, got %d", len(props))
 	}
 
+	// In strict mode, all fields are in required array
 	required := tool.parameters["required"].([]string)
-	if len(required) != 2 {
-		t.Errorf("expected 2 required params, got %d", len(required))
+	if len(required) != 3 {
+		t.Errorf("expected 3 params in required array, got %d", len(required))
 	}
 
-	// Check required fields are present
+	// Check all fields are present in required
 	requiredMap := make(map[string]bool)
 	for _, r := range required {
 		requiredMap[r] = true
 	}
 
-	if !requiredMap["required_field"] || !requiredMap["array_field"] {
-		t.Error("expected required_field and array_field to be required")
+	if !requiredMap["required_field"] || !requiredMap["array_field"] || !requiredMap["optional_field"] {
+		t.Error("expected all fields to be in required array")
 	}
 
-	if requiredMap["optional_field"] {
-		t.Error("expected optional_field to not be required")
+	// Check that optional field uses anyOf with null
+	optField := props["optional_field"].(map[string]any)
+	if _, hasAnyOf := optField["anyOf"]; !hasAnyOf {
+		t.Error("expected optional field to have anyOf")
 	}
 }
 
