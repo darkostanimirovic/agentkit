@@ -593,14 +593,6 @@ func (a *Agent) buildResponseRequest(systemPrompt string, responseTools []Respon
 		PreviousResponseID: previousResponseID,
 	}
 
-	// Enable usage tracking for streaming requests
-	// OpenAI does not include usage data in streaming responses by default
-	if a.streamResponses {
-		req.StreamOptions = &ResponseStreamOptions{
-			IncludeUsage: true,
-		}
-	}
-
 	// If reasoning effort is specified, use it; otherwise use temperature
 	if a.reasoningEffort != "" {
 		req.Reasoning = &ResponseReasoning{
