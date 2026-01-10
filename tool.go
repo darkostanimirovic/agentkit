@@ -125,6 +125,36 @@ func (tb *ToolBuilder) WithStrictMode(strict bool) *ToolBuilder {
 
 // Build returns the constructed tool
 func (tb *ToolBuilder) Build() Tool {
+	// Ensure additionalProperties: false is set for strict mode
+	if tb.tool.strict {
+		// For strict mode, OpenAI requires the parameters to be a proper object schema
+		// with additionalProperties: false, even if empty
+		if len(tb.tool.parameters) == 0 {
+			// Initialize with proper strict mode schema for empty parameters
+			tb.tool.parameters = map[string]any{
+				"type":                 "object",
+				"properties":           map[string]any{},
+				"additionalProperties": false,
+			}
+		} else {
+			// Ensure type is set to object if not already specified
+			if _, hasType := tb.tool.parameters["type"]; !hasType {
+				tb.tool.parameters["type"] = "object"
+			}
+			
+			// Ensure properties exists for object schemas
+			if tb.tool.parameters["type"] == "object" {
+				if _, hasProps := tb.tool.parameters["properties"]; !hasProps {
+					tb.tool.parameters["properties"] = map[string]any{}
+				}
+			}
+			
+			// Add additionalProperties: false if not already set
+			if _, hasAdditionalProps := tb.tool.parameters["additionalProperties"]; !hasAdditionalProps {
+				tb.tool.parameters["additionalProperties"] = false
+			}
+		}
+	}
 	return tb.tool
 }
 

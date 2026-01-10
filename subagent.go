@@ -1,10 +1,10 @@
 package agentkit
 
 import (
-"context"
-"errors"
-"fmt"
-"strings"
+	"context"
+	"errors"
+	"fmt"
+	"strings"
 )
 
 // ErrSubAgentNotConfigured is returned when a sub-agent is nil.
@@ -14,14 +14,10 @@ var ErrSubAgentNotConfigured = errors.New("agentkit: sub-agent is required")
 type SubAgentConfig struct {
 	Name        string
 	Description string
-	InputField  string
-	OutputField string
-	// IncludeTrace controls whether sub-agent reasoning/tool trace is captured and returned.
+	// IncludeTrace controls whether sub-agent reasoning/tool trace is captured and returned in the parent's context.
+	// When true, the parent agent will receive detailed execution steps from the sub-agent.
+	// This consumes additional context window space, so enable only when debugging or when the parent needs to learn from the sub-agent's approach.
 	IncludeTrace bool
-	// MaxTraceItems limits the number of trace items returned (0 = default).
-	MaxTraceItems int
-	// MaxTraceChars limits the total characters across trace items (0 = default).
-	MaxTraceChars int
 }
 
 // NewSubAgentTool creates a tool that delegates to a sub-agent.
@@ -38,7 +34,7 @@ func NewSubAgentTool(cfg SubAgentConfig, sub *Agent) (Tool, error) {
 	handler := subAgentHandler(sub, normalized)
 	tool := NewTool(normalized.Name).
 		WithDescription(normalized.Description).
-		WithParameter(normalized.InputField, String().Required().WithDescription("Input for sub-agent")).
+		WithParameter("input", String().Required().WithDescription("Task or question for the sub-agent")).
 		WithHandler(handler).
 		WithResultFormatter(func(_ string, result any) string {
 return formatSubAgentResult(normalized, result)
@@ -52,20 +48,6 @@ func normalizeSubAgentConfig(cfg SubAgentConfig) (SubAgentConfig, error) {
 	if cfg.Name == "" {
 		return SubAgentConfig{}, errors.New("agentkit: sub-agent tool name is required")
 	}
-
-	if cfg.InputField == "" {
-		cfg.InputField = "input"
-	}
-	if cfg.OutputField == "" {
-		cfg.OutputField = "response"
-	}
-	if cfg.MaxTraceItems == 0 {
-		cfg.MaxTraceItems = 40
-	}
-	if cfg.MaxTraceChars == 0 {
-		cfg.MaxTraceChars = 8000
-	}
-
 	return cfg, nil
 }
 
@@ -76,7 +58,7 @@ type SubAgentTraceItem struct {
 
 func subAgentHandler(sub *Agent, cfg SubAgentConfig) ToolHandler {
 	return func(ctx context.Context, args map[string]any) (any, error) {
-		message, err := extractSubAgentMessage(args, cfg.InputField)
+		message, err := extractSubAgentMessage(args)
 		if err != nil {
 			return nil, err
 		}
@@ -118,26 +100,27 @@ func subAgentHandler(sub *Agent, cfg SubAgentConfig) ToolHandler {
 })
 		}
 
-		result := map[string]any{
-			cfg.OutputField: finalResponse,
-			"summary":       finalSummary,
-		}
+		// Return the sub-agent's response directly
+		// If tracing is enabled, include trace in result formatter for parent visibility
 		if cfg.IncludeTrace {
-			result["trace"] = trace
+			return map[string]any{
+				"response": finalResponse,
+				"summary":  finalSummary,
+				"trace":    trace,
+			}, nil
 		}
-
-		return result, nil
+		return finalResponse, nil
 	}
 }
 
-func extractSubAgentMessage(args map[string]any, inputField string) (string, error) {
-	raw, ok := args[inputField]
+func extractSubAgentMessage(args map[string]any) (string, error) {
+	raw, ok := args["input"]
 	if !ok {
-		return "", fmt.Errorf("missing required field: %s", inputField)
+		return "", fmt.Errorf("missing required field: input")
 	}
 	message, ok := raw.(string)
 	if !ok || message == "" {
-		return "", fmt.Errorf("invalid %s: expected non-empty string", inputField)
+		return "", errors.New("invalid input: expected non-empty string")
 	}
 	return message, nil
 }
@@ -146,55 +129,21 @@ func appendTrace(items []SubAgentTraceItem, cfg SubAgentConfig, item SubAgentTra
 	if !cfg.IncludeTrace {
 		return items
 	}
-	if cfg.MaxTraceItems > 0 && len(items) >= cfg.MaxTraceItems {
-		return items
-	}
-	if cfg.MaxTraceChars > 0 {
-		current := 0
-		for _, it := range items {
-			current += len(it.Content)
-		}
-		remaining := cfg.MaxTraceChars - current
-		if remaining <= 0 {
-			return items
-		}
-		if len(item.Content) > remaining {
-			if remaining > 3 {
-				item.Content = item.Content[:remaining-3] + "..."
-			} else {
-				item.Content = item.Content[:remaining]
-			}
-		}
-	}
-	items = append(items, item)
-	return items
+	return append(items, item)
 }
 
 func formatSubAgentResult(cfg SubAgentConfig, result any) string {
-	resultMap, ok := result.(map[string]any)
-	if !ok {
-		return fmt.Sprintf("✓ %s completed", formatToolName(cfg.Name))
-	}
-
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("✓ %s completed", formatToolName(cfg.Name)))
+	
+	// If trace is enabled and result is a map, extract and display trace
 	if cfg.IncludeTrace {
-		if traceRaw, ok := resultMap["trace"]; ok {
-			if traceItems, ok := traceRaw.([]SubAgentTraceItem); ok && len(traceItems) > 0 {
-				b.WriteString("\n\nSub-agent trace:")
-				for _, item := range traceItems {
-					b.WriteString(fmt.Sprintf("\n- %s: %s", strings.ToUpper(item.Type), item.Content))
-				}
-			} else if traceAny, ok := traceRaw.([]any); ok && len(traceAny) > 0 {
-				b.WriteString("\n\nSub-agent trace:")
-				for _, raw := range traceAny {
-					if m, ok := raw.(map[string]any); ok {
-						typ, _ := m["type"].(string)
-						content, _ := m["content"].(string)
-						if typ == "" && content == "" {
-							continue
-						}
-						b.WriteString(fmt.Sprintf("\n- %s: %s", strings.ToUpper(typ), content))
+		if resultMap, ok := result.(map[string]any); ok {
+			if traceRaw, ok := resultMap["trace"]; ok {
+				if traceItems, ok := traceRaw.([]SubAgentTraceItem); ok && len(traceItems) > 0 {
+					b.WriteString("\n\nSub-agent trace:")
+					for _, item := range traceItems {
+						b.WriteString(fmt.Sprintf("\n- %s: %s", strings.ToUpper(item.Type), item.Content))
 					}
 				}
 			}

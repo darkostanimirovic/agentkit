@@ -215,9 +215,11 @@ AgentKit automatically enables **OpenAI Structured Outputs** for all tools by de
 
 **Key features:**
 - ✅ All tools use `strict: true` by default
-- ✅ Automatic `additionalProperties: false` for all objects
+- ✅ Automatic `additionalProperties: false` for all object schemas (added at Build time)
+- ✅ Automatic `type: "object"` and `properties: {}` for tools with empty/minimal schemas
 - ✅ Optional fields use `anyOf` with `null` type
 - ✅ All parameter names are in the `required` array (with null unions for optional)
+- ✅ Works with `WithParameter()`, `WithRawParameters()`, `WithJSONSchema()`, and even tools with no parameters
 
 **Two ways to define schemas:**
 
@@ -290,8 +292,16 @@ tool := agentkit.NewTool("batch_update").
     Build()
 
 // Raw JSON Schema for maximum control
+// Note: additionalProperties: false is automatically added when strict mode is enabled
 tool := agentkit.NewTool("advanced").
-    WithJSONSchema(myJSONSchema).
+    WithJSONSchema(map[string]any{
+        "type": "object",
+        "properties": map[string]any{
+            "query": map[string]any{"type": "string"},
+        },
+        "required": []string{"query"},
+        // additionalProperties: false added automatically
+    }).
     Build()
 ```
 
@@ -314,7 +324,11 @@ agent, _ := agentkit.New(agentkit.Config{
 
 ### Agents as Tools (Composition)
 
-Agents can be composed by using one agent as a tool for another. This is done using the `AsTool` method, which automatically handles event bubbling so the parent agent (and its caller) receives events from the child agent seamlessly.
+Agents can be composed by using one agent as a tool for another. There are two approaches:
+
+#### 1. Using `AsTool` (Simple)
+
+The quickest way to add an agent as a tool:
 
 ```go
 researchAgent, _ := agentkit.New(researchConfig)
@@ -322,6 +336,37 @@ researchAgent, _ := agentkit.New(researchConfig)
 mainAgent, _ := agentkit.New(mainConfig)
 mainAgent.AddTool(researchAgent.AsTool("researcher", "Can perform deep research on a topic"))
 ```
+
+#### 2. Using `NewSubAgentTool` (Advanced)
+
+For more control, including optional execution trace visibility:
+
+```go
+// Basic: sub-agent returns just its response
+tool, _ := agentkit.NewSubAgentTool(
+    agentkit.SubAgentConfig{
+        Name:        "researcher",
+        Description: "Performs deep research on a topic",
+    },
+    researchAgent,
+)
+mainAgent.AddTool(tool)
+
+// Advanced: include sub-agent's reasoning trace in parent's context
+// (useful for debugging or when parent needs to learn from sub-agent's approach)
+tool, _ := agentkit.NewSubAgentTool(
+    agentkit.SubAgentConfig{
+        Name:         "researcher",
+        Description:  "Performs deep research on a topic",
+        IncludeTrace: true,  // Parent agent sees sub-agent's execution steps
+    },
+    researchAgent,
+)
+```
+
+**Note:** `IncludeTrace` controls whether the sub-agent's execution trace (reasoning, tool calls, decisions) is included in the result sent to the parent agent. This consumes additional tokens in the parent's context window, so enable only when needed for debugging or hierarchical learning scenarios.
+
+Both approaches automatically handle event bubbling so the parent agent receives events from child agents.
 
 ### Parallel Tool Execution
 
