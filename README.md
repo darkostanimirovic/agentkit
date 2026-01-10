@@ -443,36 +443,7 @@ mainAgent, _ := agentkit.New(mainConfig)
 mainAgent.AddTool(researchAgent.AsTool("researcher", "Can perform deep research on a topic"))
 ```
 
-#### 2. Using `NewSubAgentTool` (Advanced)
-
-For more control, including optional execution trace visibility:
-
-```go
-// Basic: sub-agent returns just its response
-tool, _ := agentkit.NewSubAgentTool(
-    agentkit.SubAgentConfig{
-        Name:        "researcher",
-        Description: "Performs deep research on a topic",
-    },
-    researchAgent,
-)
-mainAgent.AddTool(tool)
-
-// Advanced: include sub-agent's reasoning trace in parent's context
-// (useful for debugging or when parent needs to learn from sub-agent's approach)
-tool, _ := agentkit.NewSubAgentTool(
-    agentkit.SubAgentConfig{
-        Name:         "researcher",
-        Description:  "Performs deep research on a topic",
-        IncludeTrace: true,  // Parent agent sees sub-agent's execution steps
-    },
-    researchAgent,
-)
-```
-
-**Note:** `IncludeTrace` controls whether the sub-agent's execution trace (reasoning, tool calls, decisions) is included in the result sent to the parent agent. This consumes additional tokens in the parent's context window, so enable only when needed for debugging or hierarchical learning scenarios.
-
-Both approaches automatically handle event bubbling so the parent agent receives events from child agents.
+Both approaches automatically handle event bubbling so the parent agent receives events from delegated agents in real-time.
 
 ### Parallel Tool Execution
 
@@ -793,7 +764,7 @@ agent, _ := agentkit.New(agentkit.Config{
 - `agent.AsHandoffTool(name, desc, ...opts)` - Convert agent to handoff tool
 - `NewHandoffConfiguration(from, to, ...opts)` - Create reusable handoff config
 - `config.AsTool(name, desc)` - Convert handoff config to tool
-- `WithIncludeTrace(bool)`, `WithMaxTurns(int)`, `WithContext(HandoffContext)` - Handoff options
+- `WithFullContext(bool)`, `WithMaxTurns(int)`, `WithContext(HandoffContext)` - Handoff options
 
 **Collaborations:**
 - `NewCollaborationSession(facilitator, ...peers)` - Create collaboration session
@@ -801,11 +772,6 @@ agent, _ := agentkit.New(agentkit.Config{
 - `session.Configure(...opts)` - Add options to session
 - `session.AsTool(name, desc)` - Convert session to tool
 - `WithMaxRounds(int)`, `WithRoundTimeout(duration)`, `WithCaptureHistory(bool)` - Collaboration options
-
-### Legacy Agent Composition
-
-- `AddSubAgent(name string, sub *Agent)` - Register a sub-agent tool (legacy)
-- `NewSubAgentTool(config, agent)` - Create sub-agent tool with options (legacy)
 
 ### Config & Context
 

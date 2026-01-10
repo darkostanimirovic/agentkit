@@ -165,7 +165,7 @@ func (h *HandoffConfiguration) AsTool(name, description string) Tool {
 			}
 
 			// Create a span for the handoff using parent's tracer
-			// This ensures sub-agent traces are properly nested
+			// This ensures delegated agent traces are properly nested
 			var spanCtx context.Context
 			var endSpan func()
 			if parentTracer != nil && !isNoOpTracer(parentTracer) {
@@ -515,7 +515,7 @@ func (a *Agent) AsHandoffTool(name, description string, opts ...HandoffOption) T
 			}
 
 			// Create a span for the handoff using parent's tracer
-			// This ensures sub-agent traces are properly nested
+			// This ensures delegated agent traces are properly nested
 			var spanCtx context.Context
 			var endSpan func()
 			if parentTracer != nil && !isNoOpTracer(parentTracer) {

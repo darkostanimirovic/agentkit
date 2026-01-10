@@ -55,27 +55,27 @@ This document describes the comprehensive fixes applied to resolve critical trac
 
 ---
 
-### Issue #4: Sub-Agent Traces Lost ❌ → ✅ FIXED
+### Issue #4: Delegated Agent Traces Lost ❌ → ✅ FIXED
 
-**Problem**: Sub-agent LLM calls were completely missing from traces.
+**Problem**: LLM calls from delegated agents (handoffs/collaboration) were completely missing from traces.
 
-**Root Cause**: Sub-agents used their own `sub.tracer` field, which could be `NoOpTracer` if the sub-agent wasn't explicitly configured with a tracer. This broke the trace hierarchy.
+**Root Cause**: Delegated agents used their own `tracer` field, which could be `NoOpTracer` if the agent wasn't explicitly configured with a tracer. This broke the trace hierarchy.
 
 **Files Modified**:
 - `context.go`: Added `WithTracer()` and `GetTracer()` functions for tracer propagation
 - `agent.go`: Parent agents now add their tracer to context in `Run()`
-- `subagent.go`: Sub-agents extract parent tracer from context and use it for all operations
-- `subagent_tracing_test.go`: Comprehensive test coverage for tracer inheritance
+- `handoff.go`: Handoff operations extract parent tracer from context and use it for delegated agents
+- `collaborate.go`: Collaboration sessions inherit parent tracer
 
-**Result**: ✅ **Fully fixed** - Sub-agents now automatically inherit the parent's tracer through context:
+**Result**: ✅ **Fully fixed** - Delegated agents now automatically inherit the parent's tracer through context:
 - Parent agent adds tracer to context when `Run()` is called
-- Sub-agent handler extracts tracer from context using `GetTracer()`
-- Creates a copy of sub-agent with parent's tracer
-- All LLM calls within sub-agent are now properly traced
+- Handoff/collaboration operations extract tracer from context using `GetTracer()`
+- Creates a copy of delegated agent with parent's tracer
+- All LLM calls within delegated agents are now properly traced
 - Maintains complete trace hierarchy with proper nesting
-- Falls back gracefully to sub-agent's own tracer if no parent tracer exists
+- Falls back gracefully to agent's own tracer if no parent tracer exists
 
-**No workaround needed** - Sub-agents automatically inherit tracing from their parent context.
+**No workaround needed** - Delegated agents automatically inherit tracing from their parent context.
 
 ---
 
@@ -92,7 +92,7 @@ All changes have been validated:
 
 **No action required** - all changes are backward compatible. Existing code will continue to work.
 
-**Sub-agent tracing now works automatically** - No need to configure sub-agents with the same tracer. The parent's tracer is automatically inherited through context.
+**Delegated agent tracing now works automatically** - No need to configure each agent with the same tracer. The parent's tracer is automatically inherited through context.
 
 ### For Reasoning Models (o1/o3)
 
@@ -113,7 +113,7 @@ The `reasoning` field will appear in Langfuse usage details when `ReasoningToken
 | Trace timestamp accuracy | ❌ Broken (race condition) | ✅ Accurate |
 | Reasoning token tracking | ❌ Missing | ✅ Tracked |
 | Stream usage capture | ❌ No diagnostics | ✅ Detailed logging |
-| Sub-agent trace continuity | ❌ Lost | ✅ **Fully Fixed** |
+| Delegated agent trace continuity | ❌ Lost | ✅ **Fully Fixed** |
 | Cost accuracy | ❌ Incorrect (missing reasoning) | ✅ Accurate |
 
 ---
@@ -121,7 +121,7 @@ The `reasoning` field will appear in Langfuse usage details when `ReasoningToken
 ## Future Enhancements
 
 1. ~~**Context-based tracer extraction**: Extract the active tracer from context rather than relying on agent's tracer field~~ ✅ **COMPLETED**
-2. ~~**Automatic sub-agent tracer inheritance**: Sub-agents automatically inherit parent's tracer at runtime~~ ✅ **COMPLETED**
+2. ~~**Automatic delegated agent tracer inheritance**: Delegated agents automatically inherit parent's tracer at runtime~~ ✅ **COMPLETED**
 3. **Trace validation**: Add runtime checks to ensure trace continuity
 4. **Better streaming diagnostics**: Capture and log the exact structure of `response.done` chunks when usage is missing
 
@@ -134,14 +134,14 @@ The `reasoning` field will appear in Langfuse usage details when `ReasoningToken
 - `agent.go` - Main agent execution and streaming
 - `agent_tracing.go` - LLM call tracing helpers
 - `responses_api.go` - OpenAI API types and client
-- `subagent.go` - Sub-agent delegation logic
+- `handoff.go` - Agent handoff/delegation logic
+- `collaborate.go` - Multi-agent collaboration logic
 
 ---
 
 ## Questions or Issues?
 
 If you encounter any tracing issues after these fixes, please check:
-1. Are all agents (including sub-agents) configured with the same `Tracer`?
-2. Is the tracer properly initialized and not disabled?
-3. Check application logs for new warning messages about missing usage data
-4. Verify the OpenAI API is returning usage data in streaming responses
+1. Is the tracer properly initialized and not disabled?
+2. Check application logs for new warning messages about missing usage data
+3. Verify the OpenAI API is returning usage data in streaming responses

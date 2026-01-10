@@ -27,7 +27,7 @@ go run main.go
 Demonstrates agent composition with:
 - Multiple specialized agents
 - Agent orchestration
-- Sub-agents as tools
+- Agents as tools for delegation
 
 ```bash
 cd examples/multi-agent

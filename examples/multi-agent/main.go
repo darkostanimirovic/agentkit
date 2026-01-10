@@ -26,7 +26,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Add sub-agents as tools
+	// Add other agents as tools for delegation
 	mainAgent.AddTool(researchAgent.AsTool("research", "Research a topic in depth"))
 	mainAgent.AddTool(summaryAgent.AsTool("summarize", "Create a concise summary"))
 

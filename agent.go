@@ -427,7 +427,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) <-chan Event {
 		defer endTrace()
 		ctx = traceCtx
 
-		// Add tracer to context so sub-agents can inherit it
+		// Add tracer to context so delegated agents (handoffs/collaboration) can inherit it
 		ctx = WithTracer(ctx, a.tracer)
 
 		// Parent publisher handling for event bubbling

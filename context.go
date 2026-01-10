@@ -96,7 +96,7 @@ func GetSpanID(ctx context.Context) (string, bool) {
 	return id, ok
 }
 
-// WithTracer adds a tracer to the context for sub-agent inheritance
+// WithTracer adds a tracer to the context for delegated agent inheritance (handoffs/collaboration)
 func WithTracer(ctx context.Context, tracer Tracer) context.Context {
 	return context.WithValue(ctx, tracerKey, tracer)
 }
