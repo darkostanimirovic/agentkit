@@ -156,10 +156,78 @@ func (h *HandoffConfiguration) AsTool(name, description string) Tool {
 				}
 			}
 
-			// Execute the handoff
-			response, summary, trace, err := executeHandoff(ctx, h.to, task, opts)
+			// Get parent's tracer from context for proper trace propagation
+			parentTracer := GetTracer(ctx)
+			if parentTracer == nil && h.from != nil {
+				parentTracer = h.from.tracer
+			}
+
+			// Create a span for the handoff using parent's tracer
+			// This ensures sub-agent traces are properly nested
+			var spanCtx context.Context
+			var endSpan func()
+			if parentTracer != nil && !isNoOpTracer(parentTracer) {
+				spanCtx, endSpan = parentTracer.StartSpan(ctx, fmt.Sprintf("handoff.%s", name))
+				defer endSpan()
+
+				fromName := ""
+				if h.from != nil {
+					fromName = h.from.getAgentName()
+				}
+				toName := ""
+				if h.to != nil {
+					toName = h.to.getAgentName()
+				}
+
+				parentTracer.SetSpanAttributes(spanCtx, map[string]any{
+					"handoff_tool":   name,
+					"handoff_from":   fromName,
+					"handoff_to":     toName,
+					"task_length":    len(task),
+					"include_trace":  opts.includeTrace,
+					"max_turns":      opts.maxTurns,
+					"has_background": opts.context.Background != "",
+				})
+			} else {
+				spanCtx = ctx
+			}
+
+			// Prepare the full task with context if provided
+			fullTask := task
+			if opts.context.Background != "" {
+				fullTask = fmt.Sprintf("Background: %s\n\nTask: %s", opts.context.Background, task)
+			}
+
+			// Create a copy of the receiving agent with the parent's tracer
+			// This ensures all LLM calls and operations are properly traced
+			delegatedAgent := *h.to
+			if parentTracer != nil && !isNoOpTracer(parentTracer) {
+				delegatedAgent.tracer = parentTracer
+			}
+
+			// Override max iterations if specified
+			if opts.maxTurns > 0 && opts.maxTurns < delegatedAgent.maxIterations {
+				delegatedAgent.maxIterations = opts.maxTurns
+			}
+
+			// Execute the handoff with proper trace context
+			response, summary, trace, err := executeHandoff(spanCtx, &delegatedAgent, fullTask, opts)
 			if err != nil {
+				if parentTracer != nil && spanCtx != nil {
+					parentTracer.SetSpanAttributes(spanCtx, map[string]any{
+						"error": err.Error(),
+					})
+				}
 				return nil, err
+			}
+
+			// Record success metrics
+			if parentTracer != nil && spanCtx != nil {
+				parentTracer.SetSpanAttributes(spanCtx, map[string]any{
+					"response_length": len(response),
+					"trace_items":     len(trace),
+					"has_summary":     summary != "",
+				})
 			}
 
 			// Return result structure
@@ -426,10 +494,68 @@ func (a *Agent) AsHandoffTool(name, description string, opts ...HandoffOption) T
 				opt(&handoffOpts)
 			}
 
-			// Execute the handoff
-			response, summary, trace, err := executeHandoff(ctx, a, task, handoffOpts)
+			// Get parent's tracer from context for proper trace propagation
+			parentTracer := GetTracer(ctx)
+			if parentTracer == nil {
+				parentTracer = a.tracer
+			}
+
+			// Create a span for the handoff using parent's tracer
+			// This ensures sub-agent traces are properly nested
+			var spanCtx context.Context
+			var endSpan func()
+			if parentTracer != nil && !isNoOpTracer(parentTracer) {
+				spanCtx, endSpan = parentTracer.StartSpan(ctx, fmt.Sprintf("handoff.%s", name))
+				defer endSpan()
+
+				parentTracer.SetSpanAttributes(spanCtx, map[string]any{
+					"handoff_tool":   name,
+					"handoff_to":     a.getAgentName(),
+					"task_length":    len(task),
+					"include_trace":  handoffOpts.includeTrace,
+					"max_turns":      handoffOpts.maxTurns,
+					"has_background": handoffOpts.context.Background != "",
+				})
+			} else {
+				spanCtx = ctx
+			}
+
+			// Prepare the full task with context if provided
+			fullTask := task
+			if handoffOpts.context.Background != "" {
+				fullTask = fmt.Sprintf("Background: %s\n\nTask: %s", handoffOpts.context.Background, task)
+			}
+
+			// Create a copy of the agent with the parent's tracer
+			// This ensures all LLM calls and operations are properly traced
+			delegatedAgent := *a
+			if parentTracer != nil && !isNoOpTracer(parentTracer) {
+				delegatedAgent.tracer = parentTracer
+			}
+
+			// Override max iterations if specified
+			if handoffOpts.maxTurns > 0 && handoffOpts.maxTurns < delegatedAgent.maxIterations {
+				delegatedAgent.maxIterations = handoffOpts.maxTurns
+			}
+
+			// Execute the handoff with proper trace context
+			response, summary, trace, err := executeHandoff(spanCtx, &delegatedAgent, fullTask, handoffOpts)
 			if err != nil {
+				if parentTracer != nil && spanCtx != nil {
+					parentTracer.SetSpanAttributes(spanCtx, map[string]any{
+						"error": err.Error(),
+					})
+				}
 				return nil, err
+			}
+
+			// Record success metrics
+			if parentTracer != nil && spanCtx != nil {
+				parentTracer.SetSpanAttributes(spanCtx, map[string]any{
+					"response_length": len(response),
+					"trace_items":     len(trace),
+					"has_summary":     summary != "",
+				})
 			}
 
 			// Return result structure
