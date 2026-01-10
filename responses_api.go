@@ -124,21 +124,27 @@ type ResponseTool struct {
 // Note: For reasoning models (gpt-5, o-series), set Reasoning.Effort instead of Temperature.
 // Temperature is ignored for reasoning models.
 type ResponseRequest struct {
-	Model              string              `json:"model"`
-	Input              any         `json:"input,omitempty"` // string or []ResponseInput
-	Instructions       string              `json:"instructions,omitempty"`
-	Temperature        float32             `json:"temperature,omitempty"`        // For GPT models only (ignored for o1/o3)
-	MaxOutputTokens    int                 `json:"max_output_tokens,omitempty"`
-	Tools              []ResponseTool      `json:"tools,omitempty"`
-	ToolChoice         any         `json:"tool_choice,omitempty"` // string or ResponseToolChoice
-	Stream             bool                `json:"stream,omitempty"`
-	Store              bool                `json:"store,omitempty"`
-	PreviousResponseID string              `json:"previous_response_id,omitempty"`
-	ParallelToolCalls  bool                `json:"parallel_tool_calls,omitempty"`
-	TopP               float32              `json:"top_p,omitempty"`
-	Text               *ResponseTextConfig  `json:"text,omitempty"`
-	Metadata           map[string]string    `json:"metadata,omitempty"`
-	Reasoning          *ResponseReasoning   `json:"reasoning,omitempty"` // For reasoning models (gpt-5/o-series): use ResponseReasoning with effort
+	Model              string                 `json:"model"`
+	Input              any                    `json:"input,omitempty"` // string or []ResponseInput
+	Instructions       string                 `json:"instructions,omitempty"`
+	Temperature        float32                `json:"temperature,omitempty"`        // For GPT models only (ignored for o1/o3)
+	MaxOutputTokens    int                    `json:"max_output_tokens,omitempty"`
+	Tools              []ResponseTool         `json:"tools,omitempty"`
+	ToolChoice         any                    `json:"tool_choice,omitempty"` // string or ResponseToolChoice
+	Stream             bool                   `json:"stream,omitempty"`
+	StreamOptions      *ResponseStreamOptions `json:"stream_options,omitempty"` // Options for streaming (e.g., include_usage)
+	Store              bool                   `json:"store,omitempty"`
+	PreviousResponseID string                 `json:"previous_response_id,omitempty"`
+	ParallelToolCalls  bool                   `json:"parallel_tool_calls,omitempty"`
+	TopP               float32                `json:"top_p,omitempty"`
+	Text               *ResponseTextConfig    `json:"text,omitempty"`
+	Metadata           map[string]string      `json:"metadata,omitempty"`
+	Reasoning          *ResponseReasoning     `json:"reasoning,omitempty"` // For reasoning models (gpt-5/o-series): use ResponseReasoning with effort
+}
+
+// ResponseStreamOptions configures streaming behavior
+type ResponseStreamOptions struct {
+	IncludeUsage bool `json:"include_usage,omitempty"` // Include usage stats in final chunk
 }
 
 // ResponseObject represents a response from the API
