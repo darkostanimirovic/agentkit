@@ -17,6 +17,7 @@ const (
 	traceIDKey        contextKey = "agentkit_trace_id"
 	spanIDKey         contextKey = "agentkit_span_id"
 	eventPublisherKey contextKey = "agentkit_event_publisher"
+	tracerKey         contextKey = "agentkit_tracer"
 )
 
 // EventPublisher is a function that publishes events
@@ -93,4 +94,16 @@ func WithSpanID(ctx context.Context, spanID string) context.Context {
 func GetSpanID(ctx context.Context) (string, bool) {
 	id, ok := ctx.Value(spanIDKey).(string)
 	return id, ok
+}
+
+// WithTracer adds a tracer to the context for sub-agent inheritance
+func WithTracer(ctx context.Context, tracer Tracer) context.Context {
+	return context.WithValue(ctx, tracerKey, tracer)
+}
+
+// GetTracer retrieves the tracer from the context
+// Returns nil if no tracer is in the context
+func GetTracer(ctx context.Context) Tracer {
+	tracer, _ := ctx.Value(tracerKey).(Tracer)
+	return tracer
 }

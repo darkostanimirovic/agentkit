@@ -415,13 +415,20 @@ func (a *Agent) ForkConversation(ctx context.Context, originalID, newID, userMes
 func (a *Agent) Run(ctx context.Context, userMessage string) <-chan Event {
 	events := make(chan Event, a.eventBuffer)
 
+	// Capture start time BEFORE launching goroutine to fix timing race condition
+	startTime := time.Now()
+
 	go func() {
-		// Start trace for this agent run
+		// Start trace for this agent run with explicit start time
 		traceCtx, endTrace := a.tracer.StartTrace(ctx, "agent.run",
 			WithTraceInput(userMessage),
+			WithTraceStartTime(startTime),
 		)
 		defer endTrace()
 		ctx = traceCtx
+
+		// Add tracer to context so sub-agents can inherit it
+		ctx = WithTracer(ctx, a.tracer)
 
 		// Parent publisher handling for event bubbling
 		parentPub, hasParent := GetEventPublisher(ctx)
@@ -925,9 +932,25 @@ func (a *Agent) processStreamChunk(ctx context.Context, state *streamState, chun
 			// Make a copy of the usage struct since it's not a pointer
 			usageCopy := chunk.Response.Usage
 			state.usage = &usageCopy
-			a.logger.Info("captured usage from chunk.Response.Usage", "input_tokens", usageCopy.InputTokens, "output_tokens", usageCopy.OutputTokens, "total_tokens", usageCopy.TotalTokens)
+			a.logger.Info("captured usage from chunk.Response.Usage", "input_tokens", usageCopy.InputTokens, "output_tokens", usageCopy.OutputTokens, "reasoning_tokens", usageCopy.ReasoningTokens, "total_tokens", usageCopy.TotalTokens)
 		} else {
-			a.logger.Warn("response.done received but no usage data found", "has_chunk_usage", chunk.Usage != nil, "has_response", chunk.Response != nil)
+			// Detailed logging to diagnose why usage data is missing
+			a.logger.Warn("response.done received but no usage data found",
+				"has_chunk_usage", chunk.Usage != nil,
+				"has_response", chunk.Response != nil,
+				"chunk_usage_total", func() int {
+					if chunk.Usage != nil {
+						return chunk.Usage.TotalTokens
+					}
+					return 0
+				}(),
+				"response_usage_total", func() int {
+					if chunk.Response != nil {
+						return chunk.Response.Usage.TotalTokens
+					}
+					return 0
+				}(),
+			)
 		}
 	case "response.created", "response.completed":
 		a.handleResponseEvent(chunk)

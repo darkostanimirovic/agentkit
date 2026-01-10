@@ -63,41 +63,60 @@ func subAgentHandler(sub *Agent, cfg SubAgentConfig) ToolHandler {
 			return nil, err
 		}
 
-		// Create a span for the sub-agent delegation if tracer is available
+		// Get parent's tracer from context - this is the key fix for sub-agent tracing
+		// The parent agent adds its tracer to context in Run(), so we can inherit it
+		parentTracer := GetTracer(ctx)
+		if parentTracer == nil {
+			parentTracer = sub.tracer // Fallback to sub-agent's own tracer
+		}
+
+		// Create a span for the sub-agent delegation using parent's tracer
+		// This ensures sub-agent traces are properly nested under parent trace
 		var spanCtx context.Context
 		var endSpan func()
-		if sub.tracer != nil {
-			spanCtx, endSpan = sub.tracer.StartSpan(ctx, fmt.Sprintf("sub_agent.%s", cfg.Name))
+		if parentTracer != nil && !isNoOpTracer(parentTracer) {
+			spanCtx, endSpan = parentTracer.StartSpan(ctx, fmt.Sprintf("sub_agent.%s", cfg.Name))
 			defer endSpan()
 			
 			// Add metadata about the delegation
-			sub.tracer.SetSpanAttributes(spanCtx, map[string]any{
-"sub_agent_name": cfg.Name,
-"input_length":   len(message),
-"include_trace":  cfg.IncludeTrace,
-})
+			parentTracer.SetSpanAttributes(spanCtx, map[string]any{
+				"sub_agent_name": cfg.Name,
+				"input_length":   len(message),
+				"include_trace":  cfg.IncludeTrace,
+			})
 		} else {
 			spanCtx = ctx
 		}
 
-		finalResponse, finalSummary, trace, err := runSubAgent(spanCtx, sub, message, cfg)
+		// Create a copy of the sub-agent with the parent's tracer
+		// This ensures all LLM calls within the sub-agent are traced
+		subWithParentTracer := *sub
+		if parentTracer != nil && !isNoOpTracer(parentTracer) {
+			subWithParentTracer.tracer = parentTracer
+		} else if sub.logger != nil {
+			sub.logger.Warn("no active tracer found for sub-agent, LLM calls may not be traced",
+				"sub_agent_name", cfg.Name)
+		}
+
+		// Pass the span context to the sub-agent so it inherits the trace
+		finalResponse, finalSummary, trace, err := runSubAgent(spanCtx, &subWithParentTracer, message, cfg)
 		if err != nil {
 			// Record error in span if tracer exists
-			if sub.tracer != nil && spanCtx != nil {
-				sub.tracer.SetSpanAttributes(spanCtx, map[string]any{
-"error": err.Error(),
+			if parentTracer != nil && spanCtx != nil {
+				parentTracer.SetSpanAttributes(spanCtx, map[string]any{
+					"error": err.Error(),
 				})
 			}
 			return nil, err
 		}
 
 		// Record success metrics in span
-		if sub.tracer != nil && spanCtx != nil {
-			sub.tracer.SetSpanAttributes(spanCtx, map[string]any{
-"response_length": len(finalResponse),
-"trace_items":     len(trace),
-"has_summary":     finalSummary != "",
-})
+		if parentTracer != nil && spanCtx != nil {
+			parentTracer.SetSpanAttributes(spanCtx, map[string]any{
+				"response_length": len(finalResponse),
+				"trace_items":     len(trace),
+				"has_summary":     finalSummary != "",
+			})
 		}
 
 		// Return the sub-agent's response directly
@@ -231,6 +250,12 @@ Content: content,
 
 	flushNarrative()
 	return finalResponse, finalSummary, trace, nil
+}
+
+// isNoOpTracer checks if a tracer is a NoOpTracer
+func isNoOpTracer(tracer Tracer) bool {
+	_, ok := tracer.(*NoOpTracer)
+	return ok
 }
 
 // AddSubAgent registers a sub-agent as a tool on the agent.
