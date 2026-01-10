@@ -73,6 +73,111 @@ var (
 	ErrHandoffExecutionFail = errors.New("agentkit: handoff execution failed")
 )
 
+// HandoffConfiguration represents a reusable handoff setup.
+// This allows creating a handoff configuration once and converting it to a tool.
+type HandoffConfiguration struct {
+	from    *Agent
+	to      *Agent
+	options handoffOptions
+}
+
+// NewHandoffConfiguration creates a reusable handoff configuration.
+// This is useful when you want to create the configuration once and convert it to a tool.
+//
+// Example:
+//
+//	handoffConfig := agentkit.NewHandoffConfiguration(coordinator, researchAgent, WithIncludeTrace(true))
+//	tool := handoffConfig.AsTool("research", "Delegate research tasks")
+//	coordinator.RegisterTool(tool)
+func NewHandoffConfiguration(from, to *Agent, opts ...HandoffOption) *HandoffConfiguration {
+	options := handoffOptions{
+		includeTrace: false,
+		maxTurns:     10,
+	}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	return &HandoffConfiguration{
+		from:    from,
+		to:      to,
+		options: options,
+	}
+}
+
+// Configure applies additional options to the handoff configuration.
+func (h *HandoffConfiguration) Configure(opts ...HandoffOption) *HandoffConfiguration {
+	for _, opt := range opts {
+		opt(&h.options)
+	}
+	return h
+}
+
+// Execute performs the handoff with a specific task.
+func (h *HandoffConfiguration) Execute(ctx context.Context, task string) (*HandoffResult, error) {
+	if h.to == nil {
+		return nil, ErrHandoffAgentNil
+	}
+	if task == "" {
+		return nil, ErrHandoffTaskEmpty
+	}
+
+	return h.from.Handoff(ctx, h.to, task, func(o *handoffOptions) { *o = h.options })
+}
+
+// AsTool converts the handoff configuration into a Tool that can be registered with an agent.
+// The LLM will decide when to use this tool and what task to provide.
+//
+// Example:
+//
+//	researchHandoff := agentkit.NewHandoffConfiguration(coordinator, researchAgent)
+//	tool := researchHandoff.AsTool(
+//	    "delegate_research",
+//	    "Delegate research tasks to a specialized research agent",
+//	)
+//	coordinator.RegisterTool(tool)
+func (h *HandoffConfiguration) AsTool(name, description string) Tool {
+	return NewTool(name).
+		WithDescription(description).
+		WithParameter("task", String().Required().WithDescription("The task to delegate to the agent")).
+		WithParameter("background", String().WithDescription("Optional background context for the handoff")).
+		WithHandler(func(ctx context.Context, args map[string]any) (any, error) {
+			task, ok := args["task"].(string)
+			if !ok || task == "" {
+				return nil, ErrHandoffTaskEmpty
+			}
+
+			// Create a copy of options
+			opts := h.options
+
+			// Add background context if provided
+			if bg, ok := args["background"].(string); ok && bg != "" {
+				opts.context = HandoffContext{
+					Background: bg,
+				}
+			}
+
+			// Execute the handoff
+			response, summary, trace, err := executeHandoff(ctx, h.to, task, opts)
+			if err != nil {
+				return nil, err
+			}
+
+			// Return result structure
+			result := &HandoffResult{
+				Response: response,
+				Summary:  summary,
+				Metadata: make(map[string]any),
+			}
+
+			if opts.includeTrace {
+				result.Trace = trace
+			}
+
+			return result, nil
+		}).
+		Build()
+}
+
 // Handoff delegates a task to another agent.
 // The receiving agent works independently with an isolated context,
 // then returns the result. The delegating agent can optionally see

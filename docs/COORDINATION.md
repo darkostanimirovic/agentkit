@@ -91,12 +91,32 @@ result, err := coordinatorAgent.Handoff(
 Convert any agent into a tool that can be called by another agent:
 
 ```go
+// Quick way - directly from agent
 coordinatorAgent.AddTool(
     researchAgent.AsHandoffTool(
         "research_agent",
         "Delegate research tasks to a specialized research agent",
     ),
 )
+
+// Or create a reusable configuration
+handoffConfig := agentkit.NewHandoffConfiguration(
+    coordinatorAgent,
+    researchAgent,
+    agentkit.WithIncludeTrace(true),
+    agentkit.WithMaxTurns(10),
+)
+
+tool := handoffConfig.AsTool(
+    "research_agent",
+    "Delegate research tasks to a specialized research agent",
+)
+
+coordinatorAgent.AddTool(tool)
+
+// Now the LLM decides when to delegate and what to ask
+result, _ := coordinatorAgent.Run(ctx, "We need to research microservices patterns")
+```
 
 // Now the coordinator can decide when to delegate
 events := coordinatorAgent.Run(ctx, "We need to choose a database...")

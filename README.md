@@ -322,7 +322,113 @@ agent, _ := agentkit.New(agentkit.Config{
 })
 ```
 
+### Multi-Agent Coordination
+
+AgentKit provides two natural patterns for agent coordination, mimicking how real people work together:
+
+#### 1. Handoffs - Delegation
+
+When one agent delegates work to another who works independently:
+
+```go
+// Create specialized agents
+researchAgent, _ := agentkit.New(researchConfig)
+coordinatorAgent, _ := agentkit.New(coordinatorConfig)
+
+// Direct handoff
+result, err := coordinatorAgent.Handoff(
+    ctx,
+    researchAgent,
+    "Research the top 3 Go web frameworks",
+    agentkit.WithIncludeTrace(true), // Optional: see how they worked
+    agentkit.WithMaxTurns(10),
+)
+
+fmt.Printf("Research: %s\n", result.Response)
+```
+
+**As a Tool** (LLM decides when to delegate):
+
+```go
+// The description tells the LLM WHEN to use this tool.
+// The LLM will provide the actual task when it calls the tool.
+coordinatorAgent.AddTool(
+    researchAgent.AsHandoffTool(
+        "research_agent",                           // Tool name
+        "Delegate to research specialist when you need deep research on technical topics", // When to use
+    ),
+)
+
+// When coordinator runs, the LLM autonomously decides:
+// Tool call: { "tool": "research_agent", "parameters": { "task": "Research top 3 Go web frameworks" } }
+//                                                          ^^^^^ LLM provides this dynamically
+
+// Or create reusable configuration
+handoffConfig := agentkit.NewHandoffConfiguration(
+    coordinatorAgent,
+    researchAgent,
+    agentkit.WithIncludeTrace(true),
+)
+
+coordinatorAgent.AddTool(
+    handoffConfig.AsTool(
+        "research_agent",
+        "Delegate to research specialist when you need deep research on technical topics",
+    ),
+)
+```
+
+#### 2. Collaboration - Peer Discussion
+
+When multiple agents need to discuss a topic as equals:
+
+```go
+// Create a collaborative session
+session := agentkit.NewCollaborationSession(
+    facilitatorAgent,  // Runs the discussion
+    engineerAgent,     // Peers who contribute
+    designerAgent,
+    productAgent,
+)
+
+// Discuss a topic
+result, err := session.Discuss(
+    ctx,
+    "Should we use WebSockets or Server-Sent Events?",
+)
+
+fmt.Printf("Decision: %s\n", result.FinalResponse)
+```
+
+**As a Tool** (LLM decides when to collaborate and what to discuss):
+
+```go
+designSession := agentkit.NewCollaborationSession(
+    facilitatorAgent,
+    engineerAgent,
+    designerAgent,
+    productAgent,
+)
+
+coordinatorAgent.AddTool(
+    designSession.AsTool(
+        "design_discussion",
+        "Form a collaborative design discussion on a specific topic",
+    ),
+)
+
+// LLM will call with: {"topic": "authentication flow design"}
+```
+
+**When to use what:**
+- **Handoff**: One agent needs focused work done independently ("Go research this and report back")
+- **Collaboration**: Multiple perspectives needed on a topic ("Let's all discuss this together")
+
+See [`docs/COORDINATION.md`](docs/COORDINATION.md) for comprehensive examples and patterns.
+
 ### Agents as Tools (Composition)
+
+> **Note**: The handoff and collaboration patterns above are preferred for new code. The methods below are maintained for backward compatibility.
 
 Agents can be composed by using one agent as a tool for another. There are two approaches:
 
@@ -623,17 +729,6 @@ tool := agentkit.NewTool("retrieve_context").
     Build()
 ```
 
-### Multi-Agent Collaboration
-
-```go
-triageAgent, _ := agentkit.New(triageConfig)
-assignAgent, _ := agentkit.New(assignConfig)
-
-mainAgent, _ := agentkit.New(mainConfig)
-_ = mainAgent.AddSubAgent("triage", triageAgent)
-_ = mainAgent.AddSubAgent("assign", assignAgent)
-```
-
 ### Production Deployment Tips
 
 ```go
@@ -688,9 +783,29 @@ agent, _ := agentkit.New(agentkit.Config{
 
 - `New(cfg Config) (*Agent, error)` - Create new agent
 - `AddTool(tool Tool)` - Register a tool
-- `AddSubAgent(name string, sub *Agent)` - Register a sub-agent tool
 - `Use(m Middleware)` - Register middleware hooks
 - `Run(ctx context.Context, userMessage string) <-chan Event` - Execute agent
+
+### Coordination
+
+**Handoffs:**
+- `agent.Handoff(ctx, to, task, ...opts)` - Delegate task to another agent
+- `agent.AsHandoffTool(name, desc, ...opts)` - Convert agent to handoff tool
+- `NewHandoffConfiguration(from, to, ...opts)` - Create reusable handoff config
+- `config.AsTool(name, desc)` - Convert handoff config to tool
+- `WithIncludeTrace(bool)`, `WithMaxTurns(int)`, `WithContext(HandoffContext)` - Handoff options
+
+**Collaborations:**
+- `NewCollaborationSession(facilitator, ...peers)` - Create collaboration session
+- `session.Discuss(ctx, topic)` - Execute collaborative discussion
+- `session.Configure(...opts)` - Add options to session
+- `session.AsTool(name, desc)` - Convert session to tool
+- `WithMaxRounds(int)`, `WithRoundTimeout(duration)`, `WithCaptureHistory(bool)` - Collaboration options
+
+### Legacy Agent Composition
+
+- `AddSubAgent(name string, sub *Agent)` - Register a sub-agent tool (legacy)
+- `NewSubAgentTool(config, agent)` - Create sub-agent tool with options (legacy)
 
 ### Config & Context
 

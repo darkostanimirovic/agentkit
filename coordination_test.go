@@ -135,6 +135,68 @@ func TestHandoff_GenerateSummary(t *testing.T) {
 	})
 }
 
+func TestHandoffConfiguration_AsTool(t *testing.T) {
+	coordinatorAgent := &Agent{
+		model:         "test-model",
+		maxIterations: 3,
+		eventBuffer:   10,
+		tracer:        &NoOpTracer{},
+	}
+	
+	delegateAgent := &Agent{
+		model:         "test-model",
+		maxIterations: 3,
+		eventBuffer:   10,
+		tracer:        &NoOpTracer{},
+	}
+
+	config := NewHandoffConfiguration(coordinatorAgent, delegateAgent, WithIncludeTrace(true))
+	tool := config.AsTool("research", "Delegate research tasks")
+	
+	if tool.name != "research" {
+		t.Errorf("Expected tool name 'research', got '%s'", tool.name)
+	}
+	
+	if tool.description != "Delegate research tasks" {
+		t.Errorf("Expected tool description 'Delegate research tasks', got '%s'", tool.description)
+	}
+}
+
+func TestHandoffConfiguration_AsTool_Execute(t *testing.T) {
+	coordinatorAgent := &Agent{
+		model:         "test-model",
+		maxIterations: 3,
+		eventBuffer:   10,
+		tracer:        &NoOpTracer{},
+	}
+	
+	delegateAgent := &Agent{
+		model:         "test-model",
+		maxIterations: 3,
+		eventBuffer:   10,
+		tracer:        &NoOpTracer{},
+	}
+
+	config := NewHandoffConfiguration(coordinatorAgent, delegateAgent)
+	tool := config.AsTool("research", "Delegate research tasks")
+	
+	ctx := context.Background()
+	
+	t.Run("MissingTask", func(t *testing.T) {
+		_, err := tool.handler(ctx, map[string]any{})
+		if err != ErrHandoffTaskEmpty {
+			t.Errorf("Expected ErrHandoffTaskEmpty, got %v", err)
+		}
+	})
+	
+	t.Run("EmptyTask", func(t *testing.T) {
+		_, err := tool.handler(ctx, map[string]any{"task": ""})
+		if err != ErrHandoffTaskEmpty {
+			t.Errorf("Expected ErrHandoffTaskEmpty, got %v", err)
+		}
+	})
+}
+
 func TestCollaboration_Validation(t *testing.T) {
 	facilitator := &Agent{
 		model:         "test-model",
