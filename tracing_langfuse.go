@@ -140,10 +140,16 @@ func (l *LangfuseTracer) StartTrace(ctx context.Context, name string, opts ...Tr
 		opt(cfg)
 	}
 
+	// Use explicit start time if provided, otherwise use current time
+	startTime := time.Now()
+	if cfg.StartTime != nil {
+		startTime = *cfg.StartTime
+	}
+
 	// Create root span
 	spanCtx, span := l.tracer.Start(ctx, name,
 		trace.WithSpanKind(trace.SpanKindServer),
-		trace.WithTimestamp(time.Now()),
+		trace.WithTimestamp(startTime),
 	)
 
 	// Set trace-level attributes
@@ -250,16 +256,26 @@ func (l *LangfuseTracer) LogGeneration(ctx context.Context, opts GenerationOptio
 	// Set usage information
 	// Per docs: both langfuse.observation.usage_details (JSON string) and gen_ai.usage.* (integers) are supported
 	if opts.Usage != nil {
-		// Set individual OpenTelemetry GenAI attributes
-		span.SetAttributes(
+		// Set individual OpenTelemetry GenAI attributes (total_tokens is critical for Langfuse)
+		attrs := []attribute.KeyValue{
 			attribute.Int("gen_ai.usage.input_tokens", opts.Usage.PromptTokens),
 			attribute.Int("gen_ai.usage.output_tokens", opts.Usage.CompletionTokens),
-		)
+			attribute.Int("gen_ai.usage.total_tokens", opts.Usage.TotalTokens),
+		}
+		// Add reasoning tokens if present (for reasoning models like o1, o3)
+		if opts.Usage.ReasoningTokens > 0 {
+			attrs = append(attrs, attribute.Int("gen_ai.usage.reasoning_tokens", opts.Usage.ReasoningTokens))
+		}
+		span.SetAttributes(attrs...)
+		
 		// Set Langfuse usage_details as JSON with correct keys: input, output, total
 		usageDetails := map[string]int{
 			"input":  opts.Usage.PromptTokens,
 			"output": opts.Usage.CompletionTokens,
 			"total":  opts.Usage.TotalTokens,
+		}
+		if opts.Usage.ReasoningTokens > 0 {
+			usageDetails["reasoning"] = opts.Usage.ReasoningTokens
 		}
 		usageJSON, _ := json.Marshal(usageDetails)
 		span.SetAttributes(attribute.String("langfuse.observation.usage_details", string(usageJSON)))

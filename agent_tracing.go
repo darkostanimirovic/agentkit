@@ -22,8 +22,22 @@ const llmCallTimingKey llmCallTimingContextKey = "agentkit.llmCallTiming"
 
 // chatMessage represents a standard OpenAI chat message format
 type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role      string     `json:"role"`
+	Content   string     `json:"content,omitempty"`
+	ToolCalls []toolCall `json:"tool_calls,omitempty"`
+}
+
+// toolCall represents a function/tool call in a message
+type toolCall struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function toolCallFunction `json:"function"`
+}
+
+// toolCallFunction represents the function details in a tool call
+type toolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 // buildModelParameters creates model parameters map for tracing based on request
@@ -93,22 +107,45 @@ func convertInputToChatFormat(input any) []chatMessage {
 }
 
 // convertOutputToChatFormat converts ResponseOutputItem to standard chat format
+// This includes assistant messages with their tool calls
 func convertOutputToChatFormat(output []ResponseOutputItem) []chatMessage {
 	var messages []chatMessage
+	var currentMessage *chatMessage
 
 	for _, item := range output {
-		if item.Type == messageType && item.Role == "assistant" {
-			msg := chatMessage{
-				Role: item.Role,
-			}
-			// Extract text from content blocks
-			for _, content := range item.Content {
-				if content.Type == outputTextType && content.Text != "" {
-					msg.Content += content.Text
+		switch item.Type {
+		case messageType:
+			if item.Role == "assistant" {
+				// Create new assistant message
+				msg := chatMessage{
+					Role: item.Role,
 				}
-			}
-			if msg.Content != "" {
+				// Extract text from content blocks
+				for _, content := range item.Content {
+					if content.Type == outputTextType && content.Text != "" {
+						msg.Content += content.Text
+					}
+				}
 				messages = append(messages, msg)
+				// Keep reference to add tool calls to this message
+				currentMessage = &messages[len(messages)-1]
+			}
+
+		case "function_call":
+			// In Responses API, tool calls are separate items of type "function_call"
+			// We need to attach them to the most recent assistant message
+			if currentMessage != nil && currentMessage.Role == "assistant" {
+				if currentMessage.ToolCalls == nil {
+					currentMessage.ToolCalls = []toolCall{}
+				}
+				currentMessage.ToolCalls = append(currentMessage.ToolCalls, toolCall{
+					ID:   item.CallID,
+					Type: "function",
+					Function: toolCallFunction{
+						Name:      item.Name,
+						Arguments: item.Arguments,
+					},
+				})
 			}
 		}
 	}
@@ -163,6 +200,7 @@ func (a *Agent) logLLMGeneration(ctx context.Context, req ResponseRequest, resp 
 		usage = &UsageInfo{
 			PromptTokens:     resp.Usage.InputTokens,
 			CompletionTokens: resp.Usage.OutputTokens,
+			ReasoningTokens:  resp.Usage.ReasoningTokens,
 			TotalTokens:      resp.Usage.TotalTokens,
 		}
 	}
@@ -244,8 +282,21 @@ func (a *Agent) logLLMGenerationFromStream(ctx context.Context, req ResponseRequ
 		usage = &UsageInfo{
 			PromptTokens:     state.usage.InputTokens,
 			CompletionTokens: state.usage.OutputTokens,
+			ReasoningTokens:  state.usage.ReasoningTokens,
 			TotalTokens:      state.usage.TotalTokens,
 		}
+	} else {
+		// Log detailed info when usage is missing to help diagnose the issue
+		a.logger.Warn("stream usage data not available",
+			"has_state", state != nil,
+			"has_usage", state != nil && state.usage != nil,
+			"total_tokens", func() int {
+				if state != nil && state.usage != nil {
+					return state.usage.TotalTokens
+				}
+				return 0
+			}(),
+		)
 	}
 
 	// Calculate estimated cost (optional - returns nil if disabled or model unknown)

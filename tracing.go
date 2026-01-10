@@ -60,6 +60,8 @@ type TraceConfig struct {
 	Environment string
 	// Release identifies the release version
 	Release string
+	// StartTime is the explicit start time for the trace (optional)
+	StartTime *time.Time
 }
 
 // SpanConfig holds configuration for a span
@@ -139,6 +141,7 @@ type GenerationOptions struct {
 type UsageInfo struct {
 	PromptTokens     int
 	CompletionTokens int
+	ReasoningTokens  int // For reasoning models (o1, o3)
 	TotalTokens      int
 }
 
@@ -185,6 +188,13 @@ func WithMetadata(metadata map[string]any) TraceOption {
 func WithTraceInput(input any) TraceOption {
 	return func(c *TraceConfig) {
 		c.Input = input
+	}
+}
+
+// WithTraceStartTime sets an explicit start time for the trace
+func WithTraceStartTime(startTime time.Time) TraceOption {
+	return func(cfg *TraceConfig) {
+		cfg.StartTime = &startTime
 	}
 }
 

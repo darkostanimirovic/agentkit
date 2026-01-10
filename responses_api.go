@@ -185,6 +185,7 @@ type ResponseToolCall struct {
 type ResponseUsage struct {
 	InputTokens         int                   `json:"input_tokens"`
 	OutputTokens        int                   `json:"output_tokens"`
+	ReasoningTokens     int                   `json:"reasoning_tokens,omitempty"` // For reasoning models (o1, o3)
 	TotalTokens         int                   `json:"total_tokens"`
 	InputTokensDetails  ResponseTokensDetails `json:"input_tokens_details"`
 	OutputTokensDetails ResponseTokensDetails `json:"output_tokens_details"`
