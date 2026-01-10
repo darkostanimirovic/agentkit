@@ -271,6 +271,7 @@ func (cs *CollaborationSession) executeCollaboration(
 }
 
 // executeRound runs one round of discussion where each peer contributes.
+// Events from peer agents are forwarded to the parent event publisher in real-time.
 func (cs *CollaborationSession) executeRound(
 	ctx context.Context,
 	roundNum int,
@@ -281,6 +282,9 @@ func (cs *CollaborationSession) executeRound(
 		Number:        roundNum,
 		Contributions: make([]CollaborationContribution, 0, len(cs.peers)),
 	}
+
+	// Get parent event publisher to forward events in real-time
+	parentPub, hasParent := GetEventPublisher(ctx)
 
 	// Each peer contributes
 	for i, peer := range cs.peers {
@@ -307,6 +311,12 @@ func (cs *CollaborationSession) executeRound(
 		
 		var response string
 		for event := range events {
+			// ALWAYS forward events to parent if available (real-time streaming)
+			if hasParent {
+				parentPub(event)
+			}
+
+			// Extract final output for the contribution
 			if event.Type == EventTypeFinalOutput {
 				if resp, ok := event.Data["response"].(string); ok {
 					response = resp
@@ -357,6 +367,7 @@ func (cs *CollaborationSession) buildPeerPrompt(roundNum int, history []string) 
 }
 
 // facilitatorSynthesis has the facilitator synthesize the round and decide if discussion should continue.
+// Events from the facilitator are forwarded to the parent event publisher in real-time.
 func (cs *CollaborationSession) facilitatorSynthesis(
 	ctx context.Context,
 	roundNum int,
@@ -383,6 +394,9 @@ func (cs *CollaborationSession) facilitatorSynthesis(
 		synthCtx = ctx
 	}
 
+	// Get parent event publisher to forward events in real-time
+	parentPub, hasParent := GetEventPublisher(ctx)
+
 	facilitatorWithTracer := *cs.facilitator
 	if tracer != nil && !isNoOpTracer(tracer) {
 		facilitatorWithTracer.tracer = tracer
@@ -392,6 +406,12 @@ func (cs *CollaborationSession) facilitatorSynthesis(
 	
 	var synthesis string
 	for event := range events {
+		// ALWAYS forward events to parent if available (real-time streaming)
+		if hasParent {
+			parentPub(event)
+		}
+
+		// Extract final output for synthesis
 		if event.Type == EventTypeFinalOutput {
 			if resp, ok := event.Data["response"].(string); ok {
 				synthesis = resp
@@ -417,6 +437,7 @@ func (cs *CollaborationSession) facilitatorSynthesis(
 }
 
 // generateFinalSynthesis creates the final response from all rounds.
+// Events from the facilitator are forwarded to the parent event publisher in real-time.
 func (cs *CollaborationSession) generateFinalSynthesis(
 	ctx context.Context,
 	topic string,
@@ -448,6 +469,9 @@ func (cs *CollaborationSession) generateFinalSynthesis(
 		finalCtx = ctx
 	}
 
+	// Get parent event publisher to forward events in real-time
+	parentPub, hasParent := GetEventPublisher(ctx)
+
 	facilitatorWithTracer := *cs.facilitator
 	if tracer != nil && !isNoOpTracer(tracer) {
 		facilitatorWithTracer.tracer = tracer
@@ -457,6 +481,12 @@ func (cs *CollaborationSession) generateFinalSynthesis(
 	
 	var finalResponse string
 	for event := range events {
+		// ALWAYS forward events to parent if available (real-time streaming)
+		if hasParent {
+			parentPub(event)
+		}
+
+		// Extract final output
 		if event.Type == EventTypeFinalOutput {
 			if resp, ok := event.Data["response"].(string); ok {
 				finalResponse = resp

@@ -16,9 +16,9 @@ type Handoff struct {
 }
 
 type handoffOptions struct {
-	includeTrace bool          // Whether to capture the delegated agent's reasoning
-	maxTurns     int           // Limit on conversation turns for the handoff
-	context      HandoffContext // Additional context to provide
+	fullContext bool          // Whether to return full conversation context OR just final result (real-time streaming always happens)
+	maxTurns    int           // Limit on conversation turns for the handoff
+	context     HandoffContext // Additional context to provide
 }
 
 // HandoffContext provides additional information for the delegated agent.
@@ -30,12 +30,14 @@ type HandoffContext struct {
 // HandoffOption configures a handoff.
 type HandoffOption func(*handoffOptions)
 
-// WithIncludeTrace enables capturing the delegated agent's reasoning steps.
-// This is useful for debugging or when the delegating agent needs to learn
-// from the approach taken. It increases context usage.
-func WithIncludeTrace(include bool) HandoffOption {
+// WithFullContext controls whether to return the full conversation context (thinking, tool calls, etc.)
+// OR just the final result in the HandoffResult. When false, only the final response is returned.
+// When true, the complete execution trace is included, which is useful for debugging or learning
+// from the approach taken but increases context usage.
+// NOTE: Real-time event streaming to parent agents ALWAYS happens regardless of this setting.
+func WithFullContext(include bool) HandoffOption {
 	return func(o *handoffOptions) {
-		o.includeTrace = include
+		o.fullContext = include
 	}
 }
 
@@ -57,7 +59,7 @@ func WithContext(ctx HandoffContext) HandoffOption {
 type HandoffResult struct {
 	Response string              // The final response from the delegated agent
 	Summary  string              // Optional summary of the work done
-	Trace    []HandoffTraceItem  // Execution trace (if includeTrace was enabled)
+	Trace    []HandoffTraceItem  // Execution trace (if fullContext was enabled)
 	Metadata map[string]any      // Additional result metadata
 }
 
@@ -86,13 +88,13 @@ type HandoffConfiguration struct {
 //
 // Example:
 //
-//	handoffConfig := agentkit.NewHandoffConfiguration(coordinator, researchAgent, WithIncludeTrace(true))
+//	handoffConfig := agentkit.NewHandoffConfiguration(coordinator, researchAgent, WithFullContext(true))
 //	tool := handoffConfig.AsTool("research", "Delegate research tasks")
 //	coordinator.RegisterTool(tool)
 func NewHandoffConfiguration(from, to *Agent, opts ...HandoffOption) *HandoffConfiguration {
 	options := handoffOptions{
-		includeTrace: false,
-		maxTurns:     10,
+		fullContext: false,
+		maxTurns:    10,
 	}
 	for _, opt := range opts {
 		opt(&options)
@@ -184,7 +186,7 @@ func (h *HandoffConfiguration) AsTool(name, description string) Tool {
 					"handoff_from":   fromName,
 					"handoff_to":     toName,
 					"task_length":    len(task),
-					"include_trace":  opts.includeTrace,
+					"full_context":   opts.fullContext,
 					"max_turns":      opts.maxTurns,
 					"has_background": opts.context.Background != "",
 				})
@@ -237,7 +239,7 @@ func (h *HandoffConfiguration) AsTool(name, description string) Tool {
 				Metadata: make(map[string]any),
 			}
 
-			if opts.includeTrace {
+			if opts.fullContext {
 				result.Trace = trace
 			}
 
@@ -249,14 +251,15 @@ func (h *HandoffConfiguration) AsTool(name, description string) Tool {
 // Handoff delegates a task to another agent.
 // The receiving agent works independently with an isolated context,
 // then returns the result. The delegating agent can optionally see
-// the execution trace to understand how the work was done.
+// the full execution trace (thinking, tool calls, etc.) to understand 
+// how the work was done. Real-time event streaming to parent ALWAYS happens.
 //
 // Example:
 //
 //	researchAgent := agentkit.NewAgent(researchConfig)
 //	result, err := coordinator.Handoff(ctx, researchAgent, 
 //	    "Research the top 3 Go web frameworks in 2026",
-//	    WithIncludeTrace(true),
+//	    WithFullContext(true),
 //	)
 func (a *Agent) Handoff(ctx context.Context, to *Agent, task string, opts ...HandoffOption) (*HandoffResult, error) {
 	if to == nil {
@@ -267,8 +270,8 @@ func (a *Agent) Handoff(ctx context.Context, to *Agent, task string, opts ...Han
 	}
 
 	options := handoffOptions{
-		includeTrace: false,
-		maxTurns:     10, // Reasonable default
+		fullContext: false,
+		maxTurns:    10, // Reasonable default
 	}
 	for _, opt := range opts {
 		opt(&options)
@@ -290,7 +293,7 @@ func (a *Agent) Handoff(ctx context.Context, to *Agent, task string, opts ...Han
 			"handoff_from":   a.getAgentName(),
 			"handoff_to":     to.getAgentName(),
 			"task_length":    len(task),
-			"include_trace":  options.includeTrace,
+			"full_context":   options.fullContext,
 			"max_turns":      options.maxTurns,
 			"has_background": options.context.Background != "",
 		})
@@ -342,7 +345,7 @@ func (a *Agent) Handoff(ctx context.Context, to *Agent, task string, opts ...Han
 		Metadata: make(map[string]any),
 	}
 
-	if options.includeTrace {
+	if options.fullContext {
 		result.Trace = trace
 	}
 
@@ -350,6 +353,8 @@ func (a *Agent) Handoff(ctx context.Context, to *Agent, task string, opts ...Han
 }
 
 // executeHandoff runs the delegated agent in isolation and captures results.
+// Events are ALWAYS forwarded to the parent event publisher in real-time.
+// The fullContext flag only controls whether trace items are returned in the result.
 func executeHandoff(ctx context.Context, agent *Agent, task string, opts handoffOptions) (string, string, []HandoffTraceItem, error) {
 	var trace []HandoffTraceItem
 	var response string
@@ -357,16 +362,25 @@ func executeHandoff(ctx context.Context, agent *Agent, task string, opts handoff
 	// Run the agent and get the event channel
 	events := agent.Run(ctx, task)
 
+	// Get parent event publisher to forward events in real-time
+	parentPub, hasParent := GetEventPublisher(ctx)
+
 	// Capture trace items if requested
 	var lastContent string
 	var runErr error
 	
 	for event := range events {
+		// ALWAYS forward events to parent if available (real-time streaming)
+		if hasParent {
+			parentPub(event)
+		}
+
+		// Optionally capture trace items based on fullContext flag
 		switch event.Type {
 		case EventTypeThinkingChunk:
 			if chunk, ok := event.Data["chunk"].(string); ok {
 				lastContent += chunk
-				if opts.includeTrace {
+				if opts.fullContext {
 					trace = append(trace, HandoffTraceItem{
 						Type:    "thought",
 						Content: chunk,
@@ -374,7 +388,7 @@ func executeHandoff(ctx context.Context, agent *Agent, task string, opts handoff
 				}
 			}
 		case EventTypeActionDetected:
-			if opts.includeTrace {
+			if opts.fullContext {
 				desc, _ := event.Data["description"].(string)
 				toolID, _ := event.Data["tool_id"].(string)
 				trace = append(trace, HandoffTraceItem{
@@ -383,7 +397,7 @@ func executeHandoff(ctx context.Context, agent *Agent, task string, opts handoff
 				})
 			}
 		case EventTypeActionResult:
-			if opts.includeTrace {
+			if opts.fullContext {
 				desc, _ := event.Data["description"].(string)
 				result := event.Data["result"]
 				trace = append(trace, HandoffTraceItem{
@@ -394,7 +408,7 @@ func executeHandoff(ctx context.Context, agent *Agent, task string, opts handoff
 		case EventTypeFinalOutput:
 			if content, ok := event.Data["response"].(string); ok {
 				response = content
-				if opts.includeTrace {
+				if opts.fullContext {
 					trace = append(trace, HandoffTraceItem{
 						Type:    "response",
 						Content: content,
@@ -478,8 +492,8 @@ func (a *Agent) AsHandoffTool(name, description string, opts ...HandoffOption) T
 
 			// Extract background if provided
 			handoffOpts := handoffOptions{
-				includeTrace: false,
-				maxTurns:     10,
+				fullContext: false,
+				maxTurns:    10,
 			}
 			
 			// Add background context if provided
@@ -512,7 +526,7 @@ func (a *Agent) AsHandoffTool(name, description string, opts ...HandoffOption) T
 					"handoff_tool":   name,
 					"handoff_to":     a.getAgentName(),
 					"task_length":    len(task),
-					"include_trace":  handoffOpts.includeTrace,
+					"full_context":   handoffOpts.fullContext,
 					"max_turns":      handoffOpts.maxTurns,
 					"has_background": handoffOpts.context.Background != "",
 				})
@@ -565,7 +579,7 @@ func (a *Agent) AsHandoffTool(name, description string, opts ...HandoffOption) T
 				Metadata: make(map[string]any),
 			}
 			
-			if handoffOpts.includeTrace {
+			if handoffOpts.fullContext {
 				result.Trace = trace
 			}
 

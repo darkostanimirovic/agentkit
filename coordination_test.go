@@ -41,12 +41,12 @@ func TestHandoff_Basic(t *testing.T) {
 }
 
 func TestHandoff_Options(t *testing.T) {
-	t.Run("WithIncludeTrace", func(t *testing.T) {
+	t.Run("WithFullContext", func(t *testing.T) {
 		opts := handoffOptions{}
-		WithIncludeTrace(true)(&opts)
+		WithFullContext(true)(&opts)
 		
-		if !opts.includeTrace {
-			t.Error("Expected includeTrace to be true")
+		if !opts.fullContext {
+			t.Error("Expected fullContext to be true")
 		}
 	})
 
@@ -150,7 +150,7 @@ func TestHandoffConfiguration_AsTool(t *testing.T) {
 		tracer:        &NoOpTracer{},
 	}
 
-	config := NewHandoffConfiguration(coordinatorAgent, delegateAgent, WithIncludeTrace(true))
+	config := NewHandoffConfiguration(coordinatorAgent, delegateAgent, WithFullContext(true))
 	tool := config.AsTool("research", "Delegate research tasks")
 	
 	if tool.name != "research" {
@@ -388,8 +388,8 @@ func TestHandoff_ExecuteHandoff(t *testing.T) {
 	ctx := context.Background()
 	
 	opts := handoffOptions{
-		includeTrace: true,
-		maxTurns:     3,
+		fullContext: true,
+		maxTurns:    3,
 	}
 	
 	response, summary, trace, err := executeHandoff(ctx, agent, "test task", opts)
@@ -406,7 +406,7 @@ func TestHandoff_ExecuteHandoff(t *testing.T) {
 	}
 	
 	if len(trace) == 0 {
-		t.Error("Expected trace items when includeTrace is true")
+		t.Error("Expected trace items when fullContext is true")
 	}
 }
 
@@ -425,8 +425,8 @@ func TestHandoff_ExecuteHandoff_WithoutTrace(t *testing.T) {
 
 	ctx := context.Background()
 	opts := handoffOptions{
-		includeTrace: false,
-		maxTurns:     2,
+		fullContext: false,
+		maxTurns:    2,
 	}
 	
 	response, _, trace, err := executeHandoff(ctx, agent, "task", opts)
@@ -438,9 +438,9 @@ func TestHandoff_ExecuteHandoff_WithoutTrace(t *testing.T) {
 		t.Error("Expected response")
 	}
 	
-	// Trace should be empty when includeTrace is false
+	// Trace should be empty when fullContext is false
 	if len(trace) > 0 {
-		t.Error("Expected empty trace when includeTrace is false")
+		t.Error("Expected empty trace when fullContext is false")
 	}
 }
 

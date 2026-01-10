@@ -280,3 +280,9 @@ func (n *NoOpTracer) SetSpanAttributes(ctx context.Context, attributes map[strin
 func (n *NoOpTracer) Flush(ctx context.Context) error {
 	return nil
 }
+
+// isNoOpTracer checks if the provided tracer is a NoOpTracer (tracing disabled)
+func isNoOpTracer(tracer Tracer) bool {
+	_, ok := tracer.(*NoOpTracer)
+	return ok
+}

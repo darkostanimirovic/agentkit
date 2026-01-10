@@ -74,14 +74,14 @@ You can delegate research to specialists when needed.`
 		fmt.Printf("Summary: %s\n\n", result.Summary)
 	}
 
-	// Example 2: Handoff with trace
-	fmt.Println("Example 2: Handoff with Trace (for debugging)")
+	// Example 2: Handoff with full context
+	fmt.Println("Example 2: Handoff with Full Context (for debugging)")
 	fmt.Println("----------------------------------------------")
 	resultWithTrace, err := managerAgent.Handoff(
 		ctx,
 		researchAgent,
 		"What are the security best practices for JWT authentication in Go?",
-		agentkit.WithIncludeTrace(true),
+		agentkit.WithFullContext(true), // Include full thinking trace in result
 	)
 	if err != nil {
 		log.Fatalf("Handoff failed: %v", err)
@@ -165,7 +165,7 @@ You can delegate research to specialists when needed.`
 		ctx,
 		researchAgent,
 		"Research the current state of AI code generation tools",
-		agentkit.WithIncludeTrace(false),
+		agentkit.WithFullContext(false), // Just get result, not full trace
 	)
 	if err != nil {
 		log.Fatalf("First handoff failed: %v", err)
