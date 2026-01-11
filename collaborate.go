@@ -336,6 +336,11 @@ func (cs *CollaborationSession) executeRound(
 		}
 		round.Contributions = append(round.Contributions, contribution)
 
+		// Emit collaboration.agent.contribution event
+		if hasParent {
+			parentPub(CollaborationAgentContribution(contribution.Agent, contribution.Content))
+		}
+
 		// Add to history for next peer in this round
 		history = append(history, fmt.Sprintf("%s: %s", contribution.Agent, contribution.Content))
 	}

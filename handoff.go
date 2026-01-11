@@ -212,8 +212,23 @@ func (h *HandoffConfiguration) AsTool(name, description string) Tool {
 				delegatedAgent.maxIterations = opts.maxTurns
 			}
 
+			// Emit handoff.start event
+			if parentPub, hasParent := GetEventPublisher(spanCtx); hasParent {
+				parentPub(HandoffStart(h.from.getAgentName(), h.to.getAgentName(), task))
+			}
+
 			// Execute the handoff with proper trace context
 			response, summary, trace, err := executeHandoff(spanCtx, &delegatedAgent, fullTask, opts)
+			
+			// Emit handoff.complete event
+			if parentPub, hasParent := GetEventPublisher(spanCtx); hasParent {
+				if err != nil {
+					parentPub(HandoffComplete(h.from.getAgentName(), h.to.getAgentName(), fmt.Sprintf("error: %v", err)))
+				} else {
+					parentPub(HandoffComplete(h.from.getAgentName(), h.to.getAgentName(), response))
+				}
+			}
+			
 			if err != nil {
 				if parentTracer != nil && spanCtx != nil {
 					parentTracer.SetSpanAttributes(spanCtx, map[string]any{
@@ -319,8 +334,23 @@ func (a *Agent) Handoff(ctx context.Context, to *Agent, task string, opts ...Han
 		delegatedAgent.maxIterations = options.maxTurns
 	}
 
+	// Emit handoff.start event
+	if parentPub, hasParent := GetEventPublisher(spanCtx); hasParent {
+		parentPub(HandoffStart(a.getAgentName(), to.getAgentName(), task))
+	}
+
 	// Execute the handoff in isolation
 	response, summary, trace, err := executeHandoff(spanCtx, &delegatedAgent, fullTask, options)
+	
+	// Emit handoff.complete event
+	if parentPub, hasParent := GetEventPublisher(spanCtx); hasParent {
+		if err != nil {
+			parentPub(HandoffComplete(a.getAgentName(), to.getAgentName(), fmt.Sprintf("error: %v", err)))
+		} else {
+			parentPub(HandoffComplete(a.getAgentName(), to.getAgentName(), response))
+		}
+	}
+	
 	if err != nil {
 		if parentTracer != nil && spanCtx != nil {
 			parentTracer.SetSpanAttributes(spanCtx, map[string]any{
@@ -552,8 +582,25 @@ func (a *Agent) AsHandoffTool(name, description string, opts ...HandoffOption) T
 				delegatedAgent.maxIterations = handoffOpts.maxTurns
 			}
 
+			// Emit handoff.start event
+			fromAgentName := "caller" // The agent that called this as a tool
+			toAgentName := a.getAgentName()
+			if parentPub, hasParent := GetEventPublisher(spanCtx); hasParent {
+				parentPub(HandoffStart(fromAgentName, toAgentName, task))
+			}
+
 			// Execute the handoff with proper trace context
 			response, summary, trace, err := executeHandoff(spanCtx, &delegatedAgent, fullTask, handoffOpts)
+			
+			// Emit handoff.complete event
+			if parentPub, hasParent := GetEventPublisher(spanCtx); hasParent {
+				if err != nil {
+					parentPub(HandoffComplete(fromAgentName, toAgentName, fmt.Sprintf("error: %v", err)))
+				} else {
+					parentPub(HandoffComplete(fromAgentName, toAgentName, response))
+				}
+			}
+			
 			if err != nil {
 				if parentTracer != nil && spanCtx != nil {
 					parentTracer.SetSpanAttributes(spanCtx, map[string]any{

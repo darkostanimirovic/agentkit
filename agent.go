@@ -465,8 +465,19 @@ func (a *Agent) Run(ctx context.Context, userMessage string) <-chan Event {
 		}
 
 		execCtx = a.applyAgentStart(execCtx, userMessage)
+		
+		// Emit agent.start event
+		agentName := "agent" // Default agent name
+		a.emit(execCtx, runLoopChan, AgentStart(agentName))
+		
 		finalOutput, runErr := a.runLoop(execCtx, userMessage, runLoopChan)
 		a.applyAgentComplete(execCtx, finalOutput, runErr)
+		
+		// Emit agent.complete event with metrics
+		duration := time.Since(startTime).Milliseconds()
+		// Note: totalTokens and iterations would ideally come from cost tracking middleware
+		// For now, setting to 0 as baseline - can be enhanced via middleware
+		a.emit(execCtx, runLoopChan, AgentComplete(agentName, finalOutput, 0, 0, duration))
 
 		if hasParent {
 			close(internalChan) // Stop the pump

@@ -6,16 +6,34 @@ import "time"
 type EventType string
 
 const (
-	EventTypeThinkingChunk    EventType = "thinking_chunk"
-	EventTypeActionDetected   EventType = "action_detected"
-	EventTypeActionResult     EventType = "action_result"
-	EventTypeProgress         EventType = "progress"
-	EventTypeDecision         EventType = "decision"
-	EventTypeFinalOutput      EventType = "final_output"
-	EventTypeError            EventType = "error"
+	// Content streaming events
+	EventTypeThinkingChunk EventType = "thinking_chunk"
+	EventTypeFinalOutput   EventType = "final_output"
+
+	// Agent lifecycle events
+	EventTypeAgentStart    EventType = "agent.start"
+	EventTypeAgentComplete EventType = "agent.complete"
+
+	// Tool execution events
+	EventTypeActionDetected EventType = "action_detected"
+	EventTypeActionResult   EventType = "action_result"
+
+	// Multi-agent coordination events
+	EventTypeHandoffStart                EventType = "handoff.start"
+	EventTypeHandoffComplete             EventType = "handoff.complete"
+	EventTypeCollaborationAgentMessage   EventType = "collaboration.agent.contribution"
+
+	// Human-in-the-loop events
 	EventTypeApprovalRequired EventType = "approval_required"
 	EventTypeApprovalGranted  EventType = "approval_granted"
 	EventTypeApprovalDenied   EventType = "approval_denied"
+
+	// Progress and decision events
+	EventTypeProgress EventType = "progress"
+	EventTypeDecision EventType = "decision"
+
+	// Error events
+	EventTypeError EventType = "error"
 )
 
 // Event represents a streaming event emitted during agent execution
@@ -117,5 +135,49 @@ func ApprovalDenied(toolName, callID, reason string) Event {
 		"tool_name": toolName,
 		"call_id":   callID,
 		"reason":    reason,
+	})
+}
+
+// AgentStart creates an agent start event
+func AgentStart(agentName string) Event {
+	return NewEvent(EventTypeAgentStart, map[string]any{
+		"agent_name": agentName,
+	})
+}
+
+// AgentComplete creates an agent complete event
+func AgentComplete(agentName, output string, totalTokens, iterations int, durationMs int64) Event {
+	return NewEvent(EventTypeAgentComplete, map[string]any{
+		"agent_name":   agentName,
+		"output":       output,
+		"total_tokens": totalTokens,
+		"iterations":   iterations,
+		"duration_ms":  durationMs,
+	})
+}
+
+// HandoffStart creates a handoff start event
+func HandoffStart(fromAgent, toAgent, task string) Event {
+	return NewEvent(EventTypeHandoffStart, map[string]any{
+		"from_agent": fromAgent,
+		"to_agent":   toAgent,
+		"task":       task,
+	})
+}
+
+// HandoffComplete creates a handoff complete event
+func HandoffComplete(fromAgent, toAgent, result string) Event {
+	return NewEvent(EventTypeHandoffComplete, map[string]any{
+		"from_agent": fromAgent,
+		"to_agent":   toAgent,
+		"result":     result,
+	})
+}
+
+// CollaborationAgentContribution creates a collaboration agent contribution event
+func CollaborationAgentContribution(agentName, contribution string) Event {
+	return NewEvent(EventTypeCollaborationAgentMessage, map[string]any{
+		"agent_name":   agentName,
+		"contribution": contribution,
 	})
 }
