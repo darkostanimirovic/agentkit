@@ -1,5 +1,6 @@
 package agentkit
 
+
 import (
 	"context"
 	"testing"
@@ -378,7 +379,7 @@ func TestHandoff_ExecuteHandoff(t *testing.T) {
 	agent, err := New(Config{
 		Model:         "test-model",
 		MaxIterations: 3,
-		LLMProvider:   mockLLM,
+		LLMProvider: mockLLM,
 		Temperature:   0.5,
 	})
 	if err != nil {
@@ -416,7 +417,7 @@ func TestHandoff_ExecuteHandoff_WithoutTrace(t *testing.T) {
 	agent, err := New(Config{
 		Model:         "test-model",
 		MaxIterations: 2,
-		LLMProvider:   mockLLM,
+		LLMProvider: mockLLM,
 		Temperature:   0.5,
 	})
 	if err != nil {
@@ -527,7 +528,7 @@ func TestHandoff_WithBackground(t *testing.T) {
 	delegatingAgent, err := New(Config{
 		Model:         "test-model",
 		MaxIterations: 2,
-		LLMProvider:   mockLLM,
+		LLMProvider: mockLLM,
 		Temperature:   0.5,
 	})
 	if err != nil {

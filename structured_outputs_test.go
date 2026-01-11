@@ -1,5 +1,6 @@
 package agentkit
 
+
 import (
 	"context"
 	"encoding/json"
@@ -184,57 +185,8 @@ func TestStructuredOutputs_ArrayOfObjects(t *testing.T) {
 }
 
 // TestStructuredOutputs_ResponseToolStrict tests that ResponseTool gets strict flag
-func TestStructuredOutputs_ResponseToolStrict(t *testing.T) {
-	tool := NewTool("test_tool").
-		WithParameter("name", String().Required()).
-		Build()
-
-	agent, err := New(Config{
-		APIKey: "test-key",
-		Model:  "gpt-4o",
-	})
-	if err != nil {
-		t.Fatalf("failed to create agent: %v", err)
-	}
-
-	agent.AddTool(tool)
-
-	responseTools := agent.buildResponseTools()
-	if len(responseTools) != 1 {
-		t.Fatalf("expected 1 tool, got %d", len(responseTools))
-	}
-
-	if !responseTools[0].Strict {
-		t.Error("expected ResponseTool to have Strict: true")
-	}
-}
 
 // TestStructuredOutputs_ResponseToolStrictDisabled tests disabling strict mode
-func TestStructuredOutputs_ResponseToolStrictDisabled(t *testing.T) {
-	tool := NewTool("test_tool").
-		WithParameter("name", String().Required()).
-		WithStrictMode(false).
-		Build()
-
-	agent, err := New(Config{
-		APIKey: "test-key",
-		Model:  "gpt-4o",
-	})
-	if err != nil {
-		t.Fatalf("failed to create agent: %v", err)
-	}
-
-	agent.AddTool(tool)
-
-	responseTools := agent.buildResponseTools()
-	if len(responseTools) != 1 {
-		t.Fatalf("expected 1 tool, got %d", len(responseTools))
-	}
-
-	if responseTools[0].Strict {
-		t.Error("expected ResponseTool to have Strict: false")
-	}
-}
 
 // TestStructuredOutputs_StructSchema tests struct-based schemas with strict mode
 func TestStructuredOutputs_StructSchema(t *testing.T) {

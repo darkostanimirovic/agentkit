@@ -1,11 +1,14 @@
 package agentkit
 
+
 import (
 	"context"
 	"log/slog"
 	"os"
 	"testing"
 	"time"
+
+	mockprovider "github.com/darkostanimirovic/agentkit/providers/mock"
 )
 
 // TestTraceTimingFix verifies that traces start with the correct timestamp
@@ -32,28 +35,14 @@ func TestTraceTimingFix(t *testing.T) {
 
 	// Create agent with mock tracer
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	mockClient := &testLLMClient{
-		response: &ResponseObject{
-			ID:     "test-response",
-			Status: "completed",
-			Output: []ResponseOutputItem{
-				{
-					Type: "message",
-					Role: "assistant",
-					Content: []ResponseContentItem{
-						{Type: "output_text", Text: "test response"},
-					},
-				},
-			},
-		},
-	}
+	mockProvider := mockprovider.New().WithResponse("test response", nil)
 
 	agent := &Agent{
 		tracer:            mockTracer,
 		tools:             make(map[string]Tool),
 		eventBuffer:       10,
 		logger:            logger,
-		responsesClient:   mockClient,
+		provider:          mockProvider,
 		maxIterations:     1,
 		model:             "test-model",
 		systemPrompt:      func(ctx context.Context) string { return "test" },

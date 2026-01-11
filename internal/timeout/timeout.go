@@ -1,4 +1,4 @@
-package agentkit
+package timeout
 
 import (
 	"time"

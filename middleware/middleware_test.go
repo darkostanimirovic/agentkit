@@ -1,13 +1,16 @@
-package agentkit
+package middleware_test
 
 import (
 	"context"
 	"sync"
 	"testing"
+
+	"github.com/darkostanimirovic/agentkit"
+	"github.com/darkostanimirovic/agentkit/middleware"
 )
 
 type recordingMiddleware struct {
-	BaseMiddleware
+	middleware.BaseMiddleware
 	mu             sync.Mutex
 	agentStarts    int
 	agentCompletes int
@@ -57,15 +60,15 @@ func (m *recordingMiddleware) OnToolComplete(context.Context, string, any, error
 }
 
 func TestMiddlewareHooks(t *testing.T) {
-	mock := NewMockLLM().
-		WithResponse("calling tool", []MockToolCall{{Name: "echo", Args: map[string]any{"message": "hi"}}}).
+	mock := agentkit.NewMockLLM().
+		WithResponse("calling tool", []agentkit.MockToolCall{{Name: "echo", Args: map[string]any{"message": "hi"}}}).
 		WithFinalResponse("done")
 
-	agent, err := New(Config{
+	agent, err := agentkit.New(agentkit.Config{
 		Model:           "gpt-4o",
 		LLMProvider:     mock,
 		StreamResponses: false,
-		Logging: &LoggingConfig{
+		Logging: &agentkit.LoggingConfig{
 			LogPrompts: false,
 		},
 	})
@@ -73,7 +76,7 @@ func TestMiddlewareHooks(t *testing.T) {
 		t.Fatalf("failed to create agent: %v", err)
 	}
 
-	tool := NewTool("echo").
+	tool := agentkit.NewTool("echo").
 		WithHandler(func(ctx context.Context, args map[string]any) (any, error) {
 			return map[string]any{"echo": args["message"]}, nil
 		}).

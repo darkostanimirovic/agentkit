@@ -1,5 +1,6 @@
 package agentkit
 
+
 import (
 	"context"
 	"errors"
@@ -42,7 +43,7 @@ func TestMockLLM_CreateResponseStream(t *testing.T) {
 		t.Fatalf("expected stream, got error: %v", err)
 	}
 
-	chunk, err := stream.Recv()
+	chunk, err := stream.ReadChunk()
 	if err != nil {
 		t.Fatalf("expected chunk, got error: %v", err)
 	}
@@ -50,7 +51,7 @@ func TestMockLLM_CreateResponseStream(t *testing.T) {
 		t.Fatalf("expected delta hi, got %q", chunk.Delta)
 	}
 
-	_, err = stream.Recv()
+	_, err = stream.ReadChunk()
 	if !errors.Is(err, io.EOF) {
 		t.Fatalf("expected EOF, got %v", err)
 	}

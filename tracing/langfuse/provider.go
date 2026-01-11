@@ -1,5 +1,5 @@
-// Package agentkit provides Langfuse tracing implementation via OpenTelemetry
-package agentkit
+// Package langfuse provides Langfuse tracing implementation via OpenTelemetry
+package langfuse
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/darkostanimirovic/agentkit"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -24,7 +25,7 @@ const (
 	tracerName = "github.com/darkostanimirovic/agentkit"
 )
 
-// LangfuseTracer implements the Tracer interface using OpenTelemetry to send traces to Langfuse
+// LangfuseTracer implements the agentkit.Tracer interface using OpenTelemetry to send traces to Langfuse
 type LangfuseTracer struct {
 	tracer         trace.Tracer
 	tracerProvider *sdktrace.TracerProvider
@@ -134,8 +135,8 @@ func NewLangfuseTracer(cfg LangfuseConfig) (*LangfuseTracer, error) {
 }
 
 // StartTrace creates a new trace context
-func (l *LangfuseTracer) StartTrace(ctx context.Context, name string, opts ...TraceOption) (context.Context, func()) {
-	cfg := &TraceConfig{}
+func (l *LangfuseTracer) StartTrace(ctx context.Context, name string, opts ...agentkit.TraceOption) (context.Context, func()) {
+	cfg := &agentkit.TraceConfig{}
 	for _, opt := range opts {
 		opt(cfg)
 	}
@@ -171,10 +172,10 @@ func (l *LangfuseTracer) StartTrace(ctx context.Context, name string, opts ...Tr
 }
 
 // StartSpan creates a new span within the current trace
-func (l *LangfuseTracer) StartSpan(ctx context.Context, name string, opts ...SpanOption) (context.Context, func()) {
-	cfg := &SpanConfig{
-		Type:  SpanTypeSpan,
-		Level: LogLevelDefault,
+func (l *LangfuseTracer) StartSpan(ctx context.Context, name string, opts ...agentkit.SpanOption) (context.Context, func()) {
+	cfg := &agentkit.SpanConfig{
+		Type:  agentkit.SpanTypeSpan,
+		Level: agentkit.LogLevelDefault,
 	}
 	for _, opt := range opts {
 		opt(cfg)
@@ -212,7 +213,7 @@ func (l *LangfuseTracer) StartSpan(ctx context.Context, name string, opts ...Spa
 }
 
 // LogGeneration records an LLM generation
-func (l *LangfuseTracer) LogGeneration(ctx context.Context, opts GenerationOptions) error {
+func (l *LangfuseTracer) LogGeneration(ctx context.Context, opts agentkit.GenerationOptions) error {
 	// Create a span for the generation
 	_, span := l.tracer.Start(ctx, opts.Name,
 		trace.WithTimestamp(opts.StartTime),
@@ -220,7 +221,7 @@ func (l *LangfuseTracer) LogGeneration(ctx context.Context, opts GenerationOptio
 	defer span.End(trace.WithTimestamp(opts.EndTime))
 
 	// Set observation type as generation
-	span.SetAttributes(attribute.String("langfuse.observation.type", string(SpanTypeGeneration)))
+	span.SetAttributes(attribute.String("langfuse.observation.type", string(agentkit.SpanTypeGeneration)))
 
 	// Set model information using Langfuse-specific attribute
 	// Per docs: langfuse.observation.model.name takes precedence
@@ -320,7 +321,7 @@ func (l *LangfuseTracer) LogGeneration(ctx context.Context, opts GenerationOptio
 	// Set status message if error
 	if opts.StatusMessage != "" {
 		span.SetAttributes(attribute.String("langfuse.observation.status_message", opts.StatusMessage))
-		if opts.Level == LogLevelError {
+		if opts.Level == agentkit.LogLevelError {
 			span.SetStatus(codes.Error, opts.StatusMessage)
 		}
 	}
@@ -336,7 +337,7 @@ func (l *LangfuseTracer) LogEvent(ctx context.Context, name string, attributes m
 	defer span.End(trace.WithTimestamp(time.Now()))
 
 	// Set observation type as event
-	span.SetAttributes(attribute.String("langfuse.observation.type", string(SpanTypeEvent)))
+	span.SetAttributes(attribute.String("langfuse.observation.type", string(agentkit.SpanTypeEvent)))
 
 	// Set attributes
 	if attributes != nil {
@@ -405,7 +406,7 @@ func (l *LangfuseTracer) Shutdown(ctx context.Context) error {
 }
 
 // setTraceAttributes sets trace-level attributes from config
-func (l *LangfuseTracer) setTraceAttributes(span trace.Span, cfg *TraceConfig) {
+func (l *LangfuseTracer) setTraceAttributes(span trace.Span, cfg *agentkit.TraceConfig) {
 	if cfg.UserID != "" {
 		span.SetAttributes(attribute.String("langfuse.user.id", cfg.UserID))
 		span.SetAttributes(attribute.String("user.id", cfg.UserID))

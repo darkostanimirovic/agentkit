@@ -1,4 +1,4 @@
-package agentkit
+package logging
 
 import (
 	"encoding/json"
@@ -83,7 +83,8 @@ func (LoggingConfig) Verbose() *LoggingConfig {
 	}
 }
 
-func resolveLogger(cfg LoggingConfig) *slog.Logger {
+// ResolveLogger creates or returns the appropriate logger from the config.
+func ResolveLogger(cfg LoggingConfig) *slog.Logger {
 	if cfg.Logger != nil {
 		return cfg.Logger
 	}

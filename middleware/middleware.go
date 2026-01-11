@@ -1,4 +1,4 @@
-package agentkit
+package middleware
 
 import "context"
 

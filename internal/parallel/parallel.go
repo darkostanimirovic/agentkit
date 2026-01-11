@@ -1,4 +1,4 @@
-package agentkit
+package parallel
 
 // SafetyMode controls how aggressively to run tools in parallel.
 type SafetyMode string

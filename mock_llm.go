@@ -45,7 +45,7 @@ func (m *MockLLM) WithResponse(text string, toolCalls []MockToolCall) *MockLLM {
 	output := ResponseOutputItem{
 		Type:    "message",
 		Role:    "assistant",
-		Content: []ResponseContentItem{{Type: outputTextType, Text: text}},
+		Content: []ResponseContentItem{{Type: "text", Text: text}},
 	}
 
 	if len(toolCalls) > 0 {
@@ -130,7 +130,7 @@ type mockStream struct {
 	closed bool
 }
 
-func (m *mockStream) Recv() (*ResponseStreamChunk, error) {
+func (m *mockStream) ReadChunk() (*ResponseStreamChunk, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

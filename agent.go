@@ -8,9 +8,37 @@ import (
 	"log/slog"
 	"sync"
 	"time"
-
+	"github.com/darkostanimirovic/agentkit/internal/conversation"
+	"github.com/darkostanimirovic/agentkit/internal/logging"
+	"github.com/darkostanimirovic/agentkit/internal/parallel"
+	"github.com/darkostanimirovic/agentkit/internal/retry"
+	"github.com/darkostanimirovic/agentkit/internal/timeout"
+	"github.com/darkostanimirovic/agentkit/middleware"
 	"github.com/darkostanimirovic/agentkit/providers"
 	"github.com/darkostanimirovic/agentkit/providers/openai"
+	"encoding/json"
+)
+
+// Type aliases for internal package types
+type (
+	ConversationStore = conversation.ConversationStore
+	Conversation      = conversation.Conversation
+	ConversationTurn  = conversation.ConversationTurn
+	RetryConfig       = retry.RetryConfig
+	TimeoutConfig     = timeout.TimeoutConfig
+	LoggingConfig     = logging.LoggingConfig
+	ParallelConfig    = parallel.ParallelConfig
+	Middleware        = middleware.Middleware
+)
+
+// Function re-exports for convenience
+var (
+	NewMemoryConversationStore = conversation.NewMemoryConversationStore
+	DefaultRetryConfig         = retry.DefaultRetryConfig
+	DefaultTimeoutConfig       = timeout.DefaultTimeoutConfig
+	DefaultLoggingConfig       = logging.DefaultLoggingConfig
+	DefaultParallelConfig      = parallel.DefaultParallelConfig
+	ErrConversationNotFound    = conversation.ErrConversationNotFound
 )
 
 const defaultEventBuffer = 10
@@ -54,6 +82,7 @@ type Config struct {
 	ConversationStore     ConversationStore
 	Approval              *ApprovalConfig
 	Provider              providers.Provider
+	LLMProvider           LLMProvider // DEPRECATED: Use Provider instead
 	Logging               *LoggingConfig
 	EventBuffer           int
 	ParallelToolExecution *ParallelConfig
@@ -70,7 +99,7 @@ var (
 
 // Validate checks if the configuration is valid.
 func (c Config) Validate() error {
-	if c.APIKey == "" && c.Provider == nil {
+	if c.APIKey == "" && c.Provider == nil && c.LLMProvider == nil {
 		return ErrMissingAPIKey
 	}
 	if c.MaxIterations < 0 || c.MaxIterations > 100 {
@@ -119,7 +148,7 @@ func New(cfg Config) (*Agent, error) {
 	if cfg.Logging != nil {
 		loggingConfig = *cfg.Logging
 	}
-	logger := resolveLogger(loggingConfig)
+	logger := logging.ResolveLogger(loggingConfig)
 
 	retryConfig := DefaultRetryConfig()
 	if cfg.Retry != nil {
@@ -146,7 +175,12 @@ func New(cfg Config) (*Agent, error) {
 
 	provider := cfg.Provider
 	if provider == nil {
-		provider = openai.New(cfg.APIKey, logger)
+		if cfg.LLMProvider != nil {
+			// Wrap legacy LLMProvider into Provider interface
+			provider = &llmProviderWrapper{llm: cfg.LLMProvider}
+		} else {
+			provider = openai.New(cfg.APIKey, logger)
+		}
 	}
 
 	eventBuffer := cfg.EventBuffer
@@ -526,4 +560,542 @@ func (a *Agent) handleIterationError(ctx context.Context, events chan<- Event, e
 	a.logger.Error(msg, append(keyvals, "error", err)...)
 	a.emit(ctx, events, Error(err))
 	return err
+}
+
+// Helper methods for tracing integration
+
+
+// llmCallTiming holds timing information for an LLM call
+type llmCallTiming struct {
+	startTime           time.Time
+	endTime             time.Time
+	completionStartTime *time.Time
+}
+
+// llmCallTimingContextKey is a custom type for context keys to avoid collisions
+type llmCallTimingContextKey string
+
+const llmCallTimingKey llmCallTimingContextKey = "agentkit.llmCallTiming"
+
+// startLLMCallTiming records the start time of an LLM call in the context
+func startLLMCallTiming(ctx context.Context) context.Context {
+	timing := &llmCallTiming{
+		startTime: time.Now(),
+	}
+	return context.WithValue(ctx, llmCallTimingKey, timing)
+}
+
+// getLLMCallTiming retrieves timing information from context
+func getLLMCallTiming(ctx context.Context) *llmCallTiming {
+	if timing, ok := ctx.Value(llmCallTimingKey).(*llmCallTiming); ok {
+		return timing
+	}
+	return nil
+}
+
+// extractLLMCallTiming extracts timing information from context, returning a non-nil value
+func extractLLMCallTiming(ctx context.Context) llmCallTiming {
+	if timing := getLLMCallTiming(ctx); timing != nil {
+		return *timing
+	}
+	// Return empty timing if not found
+	now := time.Now()
+	return llmCallTiming{
+		startTime: now,
+		endTime:   now,
+	}
+}
+
+
+// ApprovalHandler is called when a tool requires approval before execution
+// Returns true to approve, false to deny
+type ApprovalHandler func(ctx context.Context, request ApprovalRequest) (bool, error)
+
+// ApprovalRequest contains information about a tool call that requires approval
+type ApprovalRequest struct {
+	ToolName       string         `json:"tool_name"`
+	Arguments      map[string]any `json:"arguments"`
+	Description    string         `json:"description"`     // Human-friendly description
+	ConversationID string         `json:"conversation_id"` // If available
+	CallID         string         `json:"call_id"`         // Unique call identifier
+}
+
+// ApprovalConfig configures which tools require approval
+type ApprovalConfig struct {
+	// Tools is a list of tool names that require approval
+	// If empty, no tools require approval
+	Tools []string
+
+	// Handler is called for approval requests
+	// If nil, all tools in Tools list will be automatically denied
+	Handler ApprovalHandler
+
+	// AllTools, if true, requires approval for ALL tool calls
+	AllTools bool
+}
+
+// requiresApproval checks if a tool name requires approval
+func (c ApprovalConfig) requiresApproval(toolName string) bool {
+	if c.AllTools {
+		return true
+	}
+
+	for _, t := range c.Tools {
+		if t == toolName {
+			return true
+		}
+	}
+
+	return false
+}
+
+
+// ErrDepsNotFound is returned when dependencies are not found in context
+var ErrDepsNotFound = errors.New("agentkit: dependencies not found in context")
+
+// contextKey is a private type for context keys to avoid collisions
+type contextKey string
+
+const (
+	depsKey           contextKey = "agentkit_deps"
+	conversationIDKey contextKey = "agentkit_conversation_id"
+	traceIDKey        contextKey = "agentkit_trace_id"
+	spanIDKey         contextKey = "agentkit_span_id"
+	eventPublisherKey contextKey = "agentkit_event_publisher"
+	tracerKey         contextKey = "agentkit_tracer"
+)
+
+// EventPublisher is a function that publishes events
+type EventPublisher func(Event)
+
+// WithEventPublisher adds an event publisher to the context
+func WithEventPublisher(ctx context.Context, publisher EventPublisher) context.Context {
+	return context.WithValue(ctx, eventPublisherKey, publisher)
+}
+
+// GetEventPublisher retrieves the event publisher from the context
+func GetEventPublisher(ctx context.Context) (EventPublisher, bool) {
+	publisher, ok := ctx.Value(eventPublisherKey).(EventPublisher)
+	return publisher, ok
+}
+
+// WithDeps adds dependencies to the context
+func WithDeps(ctx context.Context, deps any) context.Context {
+	return context.WithValue(ctx, depsKey, deps)
+}
+
+// GetDeps retrieves dependencies from the context, returning an error if not found.
+// This is the preferred method for accessing dependencies as it allows for proper error handling.
+func GetDeps[T any](ctx context.Context) (T, error) {
+	deps, ok := ctx.Value(depsKey).(T)
+	if !ok {
+		var zero T
+		return zero, ErrDepsNotFound
+	}
+	return deps, nil
+}
+
+// MustGetDeps retrieves dependencies from the context or panics.
+//
+// Deprecated: Use GetDeps instead for better error handling.
+// This method is kept for backward compatibility but should only be used
+// in controlled environments where dependencies are guaranteed to exist.
+func MustGetDeps[T any](ctx context.Context) T {
+	deps, err := GetDeps[T](ctx)
+	if err != nil {
+		panic(err)
+	}
+	return deps
+}
+
+// WithConversation adds a conversation ID to the context
+func WithConversation(ctx context.Context, conversationID string) context.Context {
+	return context.WithValue(ctx, conversationIDKey, conversationID)
+}
+
+// GetConversationID retrieves the conversation ID from the context
+func GetConversationID(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(conversationIDKey).(string)
+	return id, ok
+}
+
+// WithTraceID adds a trace ID to the context for request correlation.
+func WithTraceID(ctx context.Context, traceID string) context.Context {
+	return context.WithValue(ctx, traceIDKey, traceID)
+}
+
+// GetTraceID retrieves the trace ID from the context.
+func GetTraceID(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(traceIDKey).(string)
+	return id, ok
+}
+
+// WithSpanID adds a span ID to the context for request correlation.
+func WithSpanID(ctx context.Context, spanID string) context.Context {
+	return context.WithValue(ctx, spanIDKey, spanID)
+}
+
+// GetSpanID retrieves the span ID from the context.
+func GetSpanID(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(spanIDKey).(string)
+	return id, ok
+}
+
+// WithTracer adds a tracer to the context for delegated agent inheritance (handoffs/collaboration)
+func WithTracer(ctx context.Context, tracer Tracer) context.Context {
+	return context.WithValue(ctx, tracerKey, tracer)
+}
+
+// GetTracer retrieves the tracer from the context
+// Returns nil if no tracer is in the context
+func GetTracer(ctx context.Context) Tracer {
+	tracer, _ := ctx.Value(tracerKey).(Tracer)
+	return tracer
+}
+
+
+// buildCompletionRequest creates a provider-agnostic completion request from current conversation state.
+func (a *Agent) buildCompletionRequest(conversationHistory []providers.Message) providers.CompletionRequest {
+	// Build tool definitions
+	tools := make([]providers.ToolDefinition, 0, len(a.tools))
+	for _, tool := range a.tools {
+		tools = append(tools, tool.ToToolDefinition())
+	}
+
+	req := providers.CompletionRequest{
+		Model:             a.model,
+		SystemPrompt:      a.buildSystemPrompt(context.Background()),
+		Messages:          conversationHistory,
+		Tools:             tools,
+		Temperature:       a.temperature,
+		MaxTokens:         0, // Let provider use default
+		TopP:              0,  // Let provider use default
+		ToolChoice:        "auto",
+		ParallelToolCalls: true,
+		ReasoningEffort:   a.reasoningEffort,
+	}
+
+	return req
+}
+
+// runNonStreamingIteration executes a single non-streaming iteration.
+func (a *Agent) runNonStreamingIteration(ctx context.Context, req providers.CompletionRequest, events chan<- Event) (*providers.CompletionResponse, error) {
+	callCtx := a.applyLLMCall(ctx, req)
+	callCtx, cancel := a.withLLMTimeout(callCtx)
+	if cancel != nil {
+		defer cancel()
+	}
+
+	// Start timing for tracing
+	callCtx = startLLMCallTiming(callCtx)
+
+	resp, err := a.provider.Complete(callCtx, req)
+	if err != nil {
+		iterationErr := fmt.Errorf("provider completion error: %w", err)
+		a.applyLLMResponse(callCtx, nil, iterationErr)
+		return nil, a.handleIterationError(callCtx, events, iterationErr, "completion failed", "model", a.model)
+	}
+	
+	a.applyLLMResponse(callCtx, resp, nil)
+
+	// TODO: Re-enable tracing after refactoring to use Tracer.LogGeneration
+	// a.logLLMGeneration(callCtx, req, resp)
+
+	if a.loggingConfig.LogResponses {
+		a.logger.Info("completion received", 
+			"content_length", len(resp.Content),
+			"tool_calls", len(resp.ToolCalls),
+			"finish_reason", resp.FinishReason)
+	}
+
+	return resp, nil
+}
+
+// runStreamingIteration executes a single streaming iteration.
+func (a *Agent) runStreamingIteration(ctx context.Context, req providers.CompletionRequest, events chan<- Event) (*providers.CompletionResponse, error) {
+	callCtx := a.applyLLMCall(ctx, req)
+	callCtx, cancel := a.withLLMTimeout(callCtx)
+	if cancel != nil {
+		defer cancel()
+	}
+
+	// Start timing for tracing
+	callCtx = startLLMCallTiming(callCtx)
+
+	stream, err := a.provider.Stream(callCtx, req)
+	if err != nil {
+		iterationErr := fmt.Errorf("provider stream error: %w", err)
+		a.applyLLMResponse(callCtx, nil, iterationErr)
+		return nil, a.handleIterationError(callCtx, events, iterationErr, "streaming failed", "model", a.model)
+	}
+	defer stream.Close()
+
+	// Accumulate streaming response
+	var content string
+	var toolCalls []providers.ToolCall
+	var usage *providers.TokenUsage
+	var finishReason providers.FinishReason
+
+	// Track tool calls being built
+	activeToolCalls := make(map[string]*providers.ToolCall)
+
+	for {
+		chunk, err := stream.Next()
+		if err != nil {
+			if err.Error() == "EOF" || err.Error() == "io: EOF" {
+				break
+			}
+			return nil, fmt.Errorf("stream read error: %w", err)
+		}
+
+		// Emit thinking chunks
+		if chunk.Content != "" {
+			content += chunk.Content
+			a.emit(ctx, events, Thinking(chunk.Content))
+		}
+
+		// Handle tool call chunks
+		if chunk.ToolCallID != "" {
+			if activeToolCalls[chunk.ToolCallID] == nil {
+				activeToolCalls[chunk.ToolCallID] = &providers.ToolCall{
+					ID:        chunk.ToolCallID,
+					Arguments: make(map[string]any),
+				}
+			}
+			tc := activeToolCalls[chunk.ToolCallID]
+			if chunk.ToolName != "" {
+				tc.Name = chunk.ToolName
+			}
+			// Note: ToolArgs come as delta, would need to accumulate and parse at end
+			// For now, we'll handle this when chunk.IsComplete
+		}
+
+		// Handle completion
+		if chunk.IsComplete {
+			finishReason = chunk.FinishReason
+			if chunk.Usage != nil {
+				usage = chunk.Usage
+			}
+			
+			// Collect completed tool calls
+			for _, tc := range activeToolCalls {
+				toolCalls = append(toolCalls, *tc)
+			}
+			break
+		}
+	}
+
+	resp := &providers.CompletionResponse{
+		ID:           fmt.Sprintf("stream-%d", len(content)), // Generate ID
+		Content:      content,
+		ToolCalls:    toolCalls,
+		FinishReason: finishReason,
+		Model:        a.model,
+	}
+	if usage != nil {
+		resp.Usage = *usage
+	}
+
+	a.applyLLMResponse(callCtx, resp, nil)
+	
+	// TODO: Re-enable tracing after refactoring to use Tracer.LogGeneration
+	// a.logLLMGeneration(callCtx, req, resp)
+
+	return resp, nil
+}
+
+
+// executeToolCalls executes all tool calls and returns messages for the conversation history.
+func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []providers.ToolCall, events chan<- Event) []providers.Message {
+	if len(toolCalls) == 0 {
+		return nil
+	}
+
+	messages := make([]providers.Message, 0, len(toolCalls))
+	
+	if a.parallelConfig.Enabled {
+		messages = a.executeToolCallsParallel(ctx, toolCalls, events)
+	} else {
+		messages = a.executeToolCallsSequential(ctx, toolCalls, events)
+	}
+	
+	return messages
+}
+
+func (a *Agent) executeToolCallsSequential(ctx context.Context, toolCalls []providers.ToolCall, events chan<- Event) []providers.Message {
+	messages := make([]providers.Message, 0, len(toolCalls))
+	
+	for _, call := range toolCalls {
+		msg := a.executeToolCall(ctx, call, events)
+		messages = append(messages, msg)
+	}
+	
+	return messages
+}
+
+func (a *Agent) executeToolCallsParallel(ctx context.Context, toolCalls []providers.ToolCall, events chan<- Event) []providers.Message {
+	type result struct {
+		index int
+		msg   providers.Message
+	}
+	
+	resultChan := make(chan result, len(toolCalls))
+	sem := make(chan struct{}, a.parallelConfig.MaxConcurrent)
+	
+	for i, call := range toolCalls {
+		sem <- struct{}{}
+		go func(idx int, tc providers.ToolCall) {
+			defer func() { <-sem }()
+			msg := a.executeToolCall(ctx, tc, events)
+			resultChan <- result{index: idx, msg: msg}
+		}(i, call)
+	}
+	
+	// Collect results
+	results := make([]result, 0, len(toolCalls))
+	for i := 0; i < len(toolCalls); i++ {
+		results = append(results, <-resultChan)
+	}
+	
+	// Sort by original order
+	messages := make([]providers.Message, len(toolCalls))
+	for _, r := range results {
+		messages[r.index] = r.msg
+	}
+	
+	return messages
+}
+
+func (a *Agent) executeToolCall(ctx context.Context, toolCall providers.ToolCall, events chan<- Event) providers.Message {
+	tool, exists := a.tools[toolCall.Name]
+	
+	// Check if tool exists
+	if !exists {
+		a.logger.Warn("tool not found", "tool", toolCall.Name)
+		a.emit(ctx, events, ToolError(toolCall.Name, fmt.Errorf("tool not found")))
+		return providers.Message{
+			Role:       providers.RoleTool,
+			Content:    fmt.Sprintf("Error: Tool '%s' not found", toolCall.Name),
+			ToolCallID: toolCall.ID,
+		}
+	}
+
+	// Check approval if required
+	if a.approvalConfig.requiresApproval(toolCall.Name) {
+		approved, rejectMsg := a.requestToolApproval(ctx, toolCall, tool, events)
+		if !approved {
+			return *rejectMsg
+		}
+	}
+
+	// Start tool execution
+	toolCtx := a.applyToolStart(ctx, toolCall.Name, toolCall.Arguments)
+	toolCtx, cancel := a.withToolTimeout(toolCtx)
+	if cancel != nil {
+		defer cancel()
+	}
+
+	// Execute tool with retry
+	var result any
+	var err error
+	
+	// Marshal arguments to JSON string for tool.Execute
+	argsJSON, err := json.Marshal(toolCall.Arguments)
+	if err != nil {
+		a.logger.Error("failed to marshal tool arguments", "tool", toolCall.Name, "error", err)
+		a.emit(ctx, events, ToolError(toolCall.Name, err))
+		return providers.Message{
+			Role:       providers.RoleTool,
+			Content:    fmt.Sprintf("Error marshaling arguments: %v", err),
+			ToolCallID: toolCall.ID,
+		}
+	}
+	
+	result, err = retry.WithRetry(toolCtx, a.retryConfig, func() (any, error) {
+		return tool.Execute(toolCtx, string(argsJSON))
+	})
+
+	// Complete tool execution
+	a.applyToolComplete(toolCtx, toolCall.Name, result, err)
+
+	// Format result
+	var content string
+	if err != nil {
+		content = fmt.Sprintf("Error executing tool: %v", err)
+		a.logger.Error("tool execution failed", "tool", toolCall.Name, "error", err)
+		a.emit(ctx, events, ToolError(toolCall.Name, err))
+	} else {
+		content = formatToolResult(result)
+		a.logger.Info("tool executed successfully", "tool", toolCall.Name)
+		a.emit(ctx, events, ToolResult(toolCall.Name, result))
+	}
+
+	return providers.Message{
+		Role:       providers.RoleTool,
+		Content:    content,
+		ToolCallID: toolCall.ID,
+		Name:       toolCall.Name,
+	}
+}
+
+func (a *Agent) requestToolApproval(ctx context.Context, toolCall providers.ToolCall, tool Tool, events chan<- Event) (bool, *providers.Message) {
+	approvalReq := ApprovalRequest{
+		ToolName:    toolCall.Name,
+		Arguments:   toolCall.Arguments,
+		Description: tool.description,
+		CallID:      toolCall.ID,
+	}
+
+	// Emit approval request
+	a.emit(ctx, events, ApprovalNeeded(approvalReq))
+
+	// Wait for approval
+	approved, err := a.evaluateApproval(ctx, toolCall, approvalReq)
+	if err != nil {
+		msg := providers.Message{
+			Role:       providers.RoleTool,
+			Content:    fmt.Sprintf("Approval timeout or error: %v", err),
+			ToolCallID: toolCall.ID,
+		}
+		return false, &msg
+	}
+
+	if !approved {
+		msg := providers.Message{
+			Role:       providers.RoleTool,
+			Content:    "Tool execution rejected by user",
+			ToolCallID: toolCall.ID,
+		}
+		a.emit(ctx, events, ApprovalRejected(approvalReq))
+		return false, &msg
+	}
+
+	a.emit(ctx, events, ApprovalGranted(toolCall.Name, toolCall.ID))
+	return true, nil
+}
+
+func (a *Agent) evaluateApproval(ctx context.Context, toolCall providers.ToolCall, req ApprovalRequest) (bool, error) {
+	if a.approvalConfig.Handler != nil {
+		return a.approvalConfig.Handler(ctx, req)
+	}
+	return false, fmt.Errorf("no approval handler configured")
+}
+
+func formatToolResult(result any) string {
+	if result == nil {
+		return "null"
+	}
+	
+	switch v := result.(type) {
+	case string:
+		return v
+	case error:
+		return fmt.Sprintf("Error: %v", v)
+	default:
+		// Try JSON encoding
+		if data, err := json.Marshal(result); err == nil {
+			return string(data)
+		}
+		return fmt.Sprintf("%v", result)
+	}
 }

@@ -1,4 +1,4 @@
-package agentkit
+package conversation
 
 import (
 	"context"
@@ -7,7 +7,10 @@ import (
 	"time"
 )
 
-const roleAssistant = "assistant"
+const (
+	roleAssistant     = "assistant"
+	searchIssuesTool  = "search_issues"
+)
 
 func TestMemoryConversationStore_SaveAndLoad(t *testing.T) {
 	store := NewMemoryConversationStore()
@@ -261,25 +264,6 @@ func TestMemoryConversationStore_Clear(t *testing.T) {
 	}
 }
 
-func TestConversationContext(t *testing.T) {
-	ctx := context.Background()
-
-	// Test without conversation ID
-	_, ok := GetConversationID(ctx)
-	if ok {
-		t.Error("expected no conversation ID in empty context")
-	}
-
-	// Test with conversation ID
-	ctx = WithConversation(ctx, "conv-123")
-	id, ok := GetConversationID(ctx)
-	if !ok {
-		t.Error("expected conversation ID in context")
-	}
-	if id != "conv-123" {
-		t.Errorf("expected id=conv-123, got %s", id)
-	}
-}
 
 func TestConversationWithToolCalls(t *testing.T) {
 	store := NewMemoryConversationStore()

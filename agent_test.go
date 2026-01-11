@@ -1,10 +1,13 @@
 package agentkit
 
+
 import (
 	"context"
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/darkostanimirovic/agentkit/providers"
 )
 
 func TestNew(t *testing.T) {
@@ -26,8 +29,8 @@ func TestNew(t *testing.T) {
 		t.Errorf("expected model gpt-4, got %s", agent.model)
 	}
 
-	if agent.responsesClient == nil {
-		t.Error("expected responsesClient to be initialized")
+	if agent.provider == nil {
+		t.Error("expected provider to be initialized")
 	}
 
 	if agent.maxIterations != 5 {
@@ -465,7 +468,7 @@ func TestConfigValidation(t *testing.T) {
 			config: Config{
 				APIKey:          "test-key",
 				Model:           "o1-mini",
-				ReasoningEffort: ReasoningEffortNone,
+				ReasoningEffort: providers.ReasoningEffortNone,
 			},
 			wantErr: nil,
 		},
@@ -474,7 +477,7 @@ func TestConfigValidation(t *testing.T) {
 			config: Config{
 				APIKey:          "test-key",
 				Model:           "o1-mini",
-				ReasoningEffort: ReasoningEffortMinimal,
+				ReasoningEffort: providers.ReasoningEffortMinimal,
 			},
 			wantErr: nil,
 		},
@@ -483,7 +486,7 @@ func TestConfigValidation(t *testing.T) {
 			config: Config{
 				APIKey:          "test-key",
 				Model:           "o1-mini",
-				ReasoningEffort: ReasoningEffortLow,
+				ReasoningEffort: providers.ReasoningEffortLow,
 			},
 			wantErr: nil,
 		},
@@ -492,7 +495,7 @@ func TestConfigValidation(t *testing.T) {
 			config: Config{
 				APIKey:          "test-key",
 				Model:           "o1-mini",
-				ReasoningEffort: ReasoningEffortMedium,
+				ReasoningEffort: providers.ReasoningEffortMedium,
 			},
 			wantErr: nil,
 		},
@@ -501,7 +504,7 @@ func TestConfigValidation(t *testing.T) {
 			config: Config{
 				APIKey:          "test-key",
 				Model:           "o1-mini",
-				ReasoningEffort: ReasoningEffortHigh,
+				ReasoningEffort: providers.ReasoningEffortHigh,
 			},
 			wantErr: nil,
 		},
@@ -510,7 +513,7 @@ func TestConfigValidation(t *testing.T) {
 			config: Config{
 				APIKey:          "test-key",
 				Model:           "o1-mini",
-				ReasoningEffort: ReasoningEffortXHigh,
+				ReasoningEffort: providers.ReasoningEffortXHigh,
 			},
 			wantErr: nil,
 		},
