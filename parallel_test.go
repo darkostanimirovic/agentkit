@@ -22,7 +22,7 @@ func TestParallelToolExecution(t *testing.T) {
 	tool2 := NewTool("tool2").WithHandler(makeHandler("tool2")).Build()
 
 	mock := NewMockLLM().
-		WithResponse("calling tools", []ToolCall{{Name: "tool1", Args: map[string]any{}}, {Name: "tool2", Args: map[string]any{}}}).
+		WithResponse("calling tools", []MockToolCall{{Name: "tool1", Args: map[string]any{}}, {Name: "tool2", Args: map[string]any{}}}).
 		WithFinalResponse("done")
 
 	agent, err := New(Config{
@@ -82,7 +82,7 @@ func TestParallelToolExecution_SerialBarrier(t *testing.T) {
 	tool2 := NewTool("tool2").WithHandler(makeHandler("tool2")).Build()
 
 	mock := NewMockLLM().
-		WithResponse("calling tools", []ToolCall{{Name: "tool1", Args: map[string]any{}}, {Name: "tool2", Args: map[string]any{}}}).
+		WithResponse("calling tools", []MockToolCall{{Name: "tool1", Args: map[string]any{}}, {Name: "tool2", Args: map[string]any{}}}).
 		WithFinalResponse("done")
 
 	agent, err := New(Config{

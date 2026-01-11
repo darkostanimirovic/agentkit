@@ -10,8 +10,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-
-	openai "github.com/sashabaranov/go-openai"
 )
 
 const (
@@ -39,7 +37,9 @@ const (
 // APIError represents an error returned by the Responses API
 type APIError struct {
 	StatusCode int
-	openai.APIError
+	Code       interface{} `json:"code"`
+	Message    string      `json:"message"`
+	Type       string      `json:"type"`
 }
 
 func (e *APIError) Error() string {
@@ -53,22 +53,26 @@ func (e *APIError) Error() string {
 // parseAPIError parses the error response from the API
 func parseAPIError(statusCode int, body []byte) error {
 	var errResp struct {
-		Error openai.APIError `json:"error"`
+		Error struct {
+			Code    interface{} `json:"code"`
+			Message string      `json:"message"`
+			Type    string      `json:"type"`
+		} `json:"error"`
 	}
 
 	if err := json.Unmarshal(body, &errResp); err != nil {
 		// Fallback to raw body
 		return &APIError{
 			StatusCode: statusCode,
-			APIError: openai.APIError{
-				Message: string(body),
-			},
+			Message:    string(body),
 		}
 	}
 
 	return &APIError{
 		StatusCode: statusCode,
-		APIError:   errResp.Error,
+		Code:       errResp.Error.Code,
+		Message:    errResp.Error.Message,
+		Type:       errResp.Error.Type,
 	}
 }
 
@@ -312,6 +316,12 @@ func (c *ResponsesClient) CreateResponse(ctx context.Context, req ResponseReques
 	return &result, nil
 }
 
+// ResponseStreamClient defines the interface for streaming responses
+type ResponseStreamClient interface {
+	ReadChunk() (*ResponseStreamChunk, error)
+	Close() error
+}
+
 // ResponseStream wraps a streaming response
 type ResponseStream struct {
 	reader *io.ReadCloser
@@ -384,6 +394,11 @@ func (s *ResponseStream) Recv() (*ResponseStreamChunk, error) {
 			return nil, io.EOF
 		}
 	}
+}
+
+// ReadChunk is an alias for Recv() to satisfy ResponseStreamClient interface
+func (s *ResponseStream) ReadChunk() (*ResponseStreamChunk, error) {
+	return s.Recv()
 }
 
 func (s *ResponseStream) ensureLogger() {
@@ -466,40 +481,4 @@ func (s *ResponseStream) Close() error {
 		return (*s.reader).Close()
 	}
 	return nil
-}
-
-// ConvertOpenAIToolsToResponseTools converts OpenAI tools to Response API tools
-func ConvertOpenAIToolsToResponseTools(tools []openai.Tool) []ResponseTool {
-	return ConvertOpenAIToolsToResponseToolsWithStrict(tools, true)
-}
-
-// ConvertOpenAIToolsToResponseToolsWithStrict converts OpenAI tools to Response API tools
-// with control over strict mode. When strict is true, enables OpenAI Structured Outputs
-// for guaranteed schema adherence.
-func ConvertOpenAIToolsToResponseToolsWithStrict(tools []openai.Tool, strict bool) []ResponseTool {
-	result := make([]ResponseTool, len(tools))
-	for i, tool := range tools {
-		// Convert parameters with type assertion
-		var params map[string]any
-		if tool.Function.Parameters != nil {
-			if p, ok := tool.Function.Parameters.(map[string]any); ok {
-				params = p
-			} else {
-				// Try to marshal and unmarshal to convert
-				if data, err := json.Marshal(tool.Function.Parameters); err == nil {
-					_ = json.Unmarshal(data, &params)
-				}
-			}
-		}
-
-		// Responses API format: name/description/parameters at top level
-		result[i] = ResponseTool{
-			Type:        string(tool.Type),
-			Name:        tool.Function.Name,
-			Description: tool.Function.Description,
-			Parameters:  params,
-			Strict:      strict,
-		}
-	}
-	return result
 }

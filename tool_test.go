@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
-
-	"github.com/sashabaranov/go-openai"
 )
 
 const (
@@ -224,22 +222,19 @@ func TestTool_ToOpenAI(t *testing.T) {
 		WithHandler(handler).
 		Build()
 
-	openaiTool := tool.ToOpenAI()
+	// Test new provider-agnostic method
+	toolDef := tool.ToToolDefinition()
 
-	if openaiTool.Type != openai.ToolTypeFunction {
-		t.Errorf("expected type %s, got %s", openai.ToolTypeFunction, openaiTool.Type)
+	if toolDef.Name != "assign_team" {
+		t.Errorf("expected name assign_team, got %s", toolDef.Name)
 	}
 
-	if openaiTool.Function.Name != "assign_team" {
-		t.Errorf("expected name assign_team, got %s", openaiTool.Function.Name)
-	}
-
-	if openaiTool.Function.Description != "Assign work item to team" {
-		t.Errorf("expected description, got %s", openaiTool.Function.Description)
+	if toolDef.Description != "Assign work item to team" {
+		t.Errorf("expected description, got %s", toolDef.Description)
 	}
 
 	// Verify parameters are JSON-encodable
-	paramsJSON, err := json.Marshal(openaiTool.Function.Parameters)
+	paramsJSON, err := json.Marshal(toolDef.Parameters)
 	if err != nil {
 		t.Fatalf("parameters not JSON-encodable: %v", err)
 	}

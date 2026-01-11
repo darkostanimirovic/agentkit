@@ -141,7 +141,6 @@ func (h *HandoffConfiguration) AsTool(name, description string) Tool {
 	return NewTool(name).
 		WithDescription(description).
 		WithParameter("task", String().Required().WithDescription("The task to delegate to the agent")).
-		WithParameter("background", String().WithDescription("Optional background context for the handoff")).
 		WithHandler(func(ctx context.Context, args map[string]any) (any, error) {
 			task, ok := args["task"].(string)
 			if !ok || task == "" {
@@ -150,13 +149,6 @@ func (h *HandoffConfiguration) AsTool(name, description string) Tool {
 
 			// Create a copy of options
 			opts := h.options
-
-			// Add background context if provided
-			if bg, ok := args["background"].(string); ok && bg != "" {
-				opts.context = HandoffContext{
-					Background: bg,
-				}
-			}
 
 			// Get parent's tracer from context for proper trace propagation
 			parentTracer := GetTracer(ctx)
@@ -512,30 +504,36 @@ func (a *Agent) getAgentName() string {
 func (a *Agent) AsHandoffTool(name, description string, opts ...HandoffOption) Tool {
 	return NewTool(name).
 		WithDescription(description).
-		WithParameter("task", String().Required().WithDescription("The task to delegate to this agent")).
-		WithParameter("background", String().WithDescription("Optional background context about why this handoff is happening")).
 		WithHandler(func(ctx context.Context, args map[string]any) (any, error) {
+			// Extract task from args
 			task, ok := args["task"].(string)
+			if !ok {
+				task, ok = args["input"].(string)
+			}
 			if !ok || task == "" {
 				return nil, ErrHandoffTaskEmpty
 			}
 
 			// Extract background if provided
 			handoffOpts := handoffOptions{
-				fullContext: false,
+				fullContext: true,
 				maxTurns:    10,
 			}
 			
-			// Add background context if provided
-			if bg, ok := args["background"].(string); ok && bg != "" {
-				handoffOpts.context = HandoffContext{
-					Background: bg,
-				}
+			// Extract background from args if present
+			if background, ok := args["background"].(string); ok {
+				handoffOpts.context.Background = background
 			}
 			
 			// Apply any provided options
 			for _, opt := range opts {
 				opt(&handoffOpts)
+			}
+
+			// Prepare the full task with context if provided
+			fullTask := task
+			if handoffOpts.context.Background != "" {
+				fullTask = fmt.Sprintf("Background: %s\n\nTask: %s", handoffOpts.context.Background, task)
 			}
 
 			// Get parent's tracer from context for proper trace propagation
@@ -555,19 +553,12 @@ func (a *Agent) AsHandoffTool(name, description string, opts ...HandoffOption) T
 				parentTracer.SetSpanAttributes(spanCtx, map[string]any{
 					"handoff_tool":   name,
 					"handoff_to":     a.getAgentName(),
-					"task_length":    len(task),
 					"full_context":   handoffOpts.fullContext,
 					"max_turns":      handoffOpts.maxTurns,
 					"has_background": handoffOpts.context.Background != "",
 				})
 			} else {
 				spanCtx = ctx
-			}
-
-			// Prepare the full task with context if provided
-			fullTask := task
-			if handoffOpts.context.Background != "" {
-				fullTask = fmt.Sprintf("Background: %s\n\nTask: %s", handoffOpts.context.Background, task)
 			}
 
 			// Create a copy of the agent with the parent's tracer
@@ -586,7 +577,7 @@ func (a *Agent) AsHandoffTool(name, description string, opts ...HandoffOption) T
 			fromAgentName := "caller" // The agent that called this as a tool
 			toAgentName := a.getAgentName()
 			if parentPub, hasParent := GetEventPublisher(spanCtx); hasParent {
-				parentPub(HandoffStart(fromAgentName, toAgentName, task))
+				parentPub(HandoffStart(fromAgentName, toAgentName, fullTask))
 			}
 
 			// Execute the handoff with proper trace context

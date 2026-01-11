@@ -58,7 +58,7 @@ func (m *recordingMiddleware) OnToolComplete(context.Context, string, any, error
 
 func TestMiddlewareHooks(t *testing.T) {
 	mock := NewMockLLM().
-		WithResponse("calling tool", []ToolCall{{Name: "echo", Args: map[string]any{"message": "hi"}}}).
+		WithResponse("calling tool", []MockToolCall{{Name: "echo", Args: map[string]any{"message": "hi"}}}).
 		WithFinalResponse("done")
 
 	agent, err := New(Config{

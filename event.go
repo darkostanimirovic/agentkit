@@ -61,6 +61,11 @@ func ThinkingChunk(chunk string) Event {
 	})
 }
 
+// Thinking creates a thinking event (alias for ThinkingChunk)
+func Thinking(content string) Event {
+	return ThinkingChunk(content)
+}
+
 // ActionDetected creates an action detected event
 func ActionDetected(description, toolID string) Event {
 	return NewEvent(EventTypeActionDetected, map[string]any{
@@ -77,6 +82,11 @@ func ActionResult(description string, result any) Event {
 	})
 }
 
+// ToolResult creates a tool result event (alias for ActionResult)
+func ToolResult(toolName string, result any) Event {
+	return ActionResult(toolName, result)
+}
+
 // FinalOutput creates a final output event
 func FinalOutput(summary, response string) Event {
 	return NewEvent(EventTypeFinalOutput, map[string]any{
@@ -89,6 +99,14 @@ func FinalOutput(summary, response string) Event {
 func Error(err error) Event {
 	return NewEvent(EventTypeError, map[string]any{
 		"error": err.Error(),
+	})
+}
+
+// ToolError creates a tool execution error event
+func ToolError(toolName string, err error) Event {
+	return NewEvent(EventTypeError, map[string]any{
+		"tool_name": toolName,
+		"error":     err.Error(),
 	})
 }
 
@@ -121,6 +139,11 @@ func ApprovalRequired(request ApprovalRequest) Event {
 	})
 }
 
+// ApprovalNeeded is an alias for ApprovalRequired
+func ApprovalNeeded(request ApprovalRequest) Event {
+	return ApprovalRequired(request)
+}
+
 // ApprovalGranted creates an approval granted event
 func ApprovalGranted(toolName, callID string) Event {
 	return NewEvent(EventTypeApprovalGranted, map[string]any{
@@ -136,6 +159,11 @@ func ApprovalDenied(toolName, callID, reason string) Event {
 		"call_id":   callID,
 		"reason":    reason,
 	})
+}
+
+// ApprovalRejected creates an approval rejected event
+func ApprovalRejected(request ApprovalRequest) Event {
+	return ApprovalDenied(request.ToolName, request.CallID, "User rejected")
 }
 
 // AgentStart creates an agent start event

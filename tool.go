@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	openai "github.com/sashabaranov/go-openai"
+	"github.com/darkostanimirovic/agentkit/providers"
 )
 
 // ToolHandler is a function that executes a tool
@@ -158,11 +158,35 @@ func (tb *ToolBuilder) Build() Tool {
 	return tb.tool
 }
 
-// ToOpenAI converts the tool to OpenAI function definition
-func (t *Tool) ToOpenAI() openai.Tool {
-	return openai.Tool{
-		Type: openai.ToolTypeFunction,
-		Function: &openai.FunctionDefinition{
+// ToToolDefinition converts the tool to a provider-agnostic ToolDefinition.
+func (t *Tool) ToToolDefinition() providers.ToolDefinition {
+	return providers.ToolDefinition{
+		Name:        t.name,
+		Description: t.description,
+		Parameters:  t.parameters,
+	}
+}
+
+// ToOpenAI converts the tool to OpenAI function definition.
+// DEPRECATED: This method is kept for backward compatibility but couples the tool to OpenAI.
+// New code should use ToToolDefinition() instead.
+func (t *Tool) ToOpenAI() interface{} {
+	// Return a generic structure that matches OpenAI's format
+	// but doesn't import openai types
+	return struct {
+		Type     string
+		Function struct {
+			Name        string
+			Description string
+			Parameters  map[string]any
+		}
+	}{
+		Type: "function",
+		Function: struct {
+			Name        string
+			Description string
+			Parameters  map[string]any
+		}{
 			Name:        t.name,
 			Description: t.description,
 			Parameters:  t.parameters,

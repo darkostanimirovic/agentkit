@@ -10,8 +10,9 @@ import (
 	"time"
 )
 
-// ToolCall is a simplified tool call used for mock responses.
-type ToolCall struct {
+// MockToolCall is a simplified tool call used for mock responses.
+// DEPRECATED: Use ToolCall from provider.go instead.
+type MockToolCall struct {
 	Name string
 	Args map[string]any
 }
@@ -36,7 +37,7 @@ func NewMockLLM() *MockLLM {
 }
 
 // WithResponse appends a mock response with optional tool calls.
-func (m *MockLLM) WithResponse(text string, toolCalls []ToolCall) *MockLLM {
+func (m *MockLLM) WithResponse(text string, toolCalls []MockToolCall) *MockLLM {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
