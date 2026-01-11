@@ -36,6 +36,42 @@ const (
 	ReasoningEffortXHigh ReasoningEffort = "xhigh"
 )
 
+// APIError represents an error returned by the Responses API
+type APIError struct {
+	StatusCode int
+	openai.APIError
+}
+
+func (e *APIError) Error() string {
+	msg := fmt.Sprintf("API error (status %d): %s", e.StatusCode, e.Message)
+	if e.Code != nil {
+		msg += fmt.Sprintf(" (code: %v)", e.Code)
+	}
+	return msg
+}
+
+// parseAPIError parses the error response from the API
+func parseAPIError(statusCode int, body []byte) error {
+	var errResp struct {
+		Error openai.APIError `json:"error"`
+	}
+
+	if err := json.Unmarshal(body, &errResp); err != nil {
+		// Fallback to raw body
+		return &APIError{
+			StatusCode: statusCode,
+			APIError: openai.APIError{
+				Message: string(body),
+			},
+		}
+	}
+
+	return &APIError{
+		StatusCode: statusCode,
+		APIError:   errResp.Error,
+	}
+}
+
 // ResponsesClient wraps OpenAI's Responses API
 type ResponsesClient struct {
 	apiKey     string
@@ -265,7 +301,7 @@ func (c *ResponsesClient) CreateResponse(ctx context.Context, req ResponseReques
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+		return nil, parseAPIError(resp.StatusCode, body)
 	}
 
 	var result ResponseObject
@@ -309,7 +345,7 @@ func (c *ResponsesClient) CreateResponseStream(ctx context.Context, req Response
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+		return nil, parseAPIError(resp.StatusCode, body)
 	}
 
 	return &ResponseStream{

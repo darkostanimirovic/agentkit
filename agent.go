@@ -444,7 +444,11 @@ func (a *Agent) Run(ctx context.Context, userMessage string) <-chan Event {
 			go func() {
 				defer wg.Done()
 				for e := range internalChan {
-					parentPub(e)
+					// Don't bubble up error events to parent, as parent agent handling the tool call
+					// should decide whether this is fatal or recoverable.
+					if e.Type != EventTypeError {
+						parentPub(e)
+					}
 					events <- e
 				}
 			}()
@@ -692,8 +696,12 @@ func (a *Agent) handleIterationError(ctx context.Context, events chan<- Event, e
 
 func (a *Agent) validateResponse(ctx context.Context, resp *ResponseObject, events chan<- Event) error {
 	if resp.Status == "failed" {
-		iterationErr := fmt.Errorf("response failed: %s", resp.Error.Message)
-		return a.handleIterationError(ctx, events, iterationErr, "response failed", "model", a.model)
+		msg := fmt.Sprintf("response failed: %s", resp.Error.Message)
+		if resp.Error.Code != "" {
+			msg += fmt.Sprintf(" (code: %s)", resp.Error.Code)
+		}
+		iterationErr := errors.New(msg)
+		return a.handleIterationError(ctx, events, iterationErr, "response failed", "model", a.model, "code", resp.Error.Code)
 	}
 
 	if len(resp.Output) == 0 {
@@ -806,6 +814,12 @@ func (a *Agent) runStreamingIteration(ctx context.Context, req ResponseRequest, 
 	a.logger.Info("creating response stream", "model", a.model, "has_tools", len(req.Tools) > 0)
 	stream, err := a.responsesClient.CreateResponseStream(callCtx, req)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			a.logger.Info("stream creation canceled", "model", a.model, "error", err)
+			iterationErr := fmt.Errorf("stream creation canceled: %w", err)
+			a.applyLLMResponse(callCtx, nil, iterationErr)
+			return "", nil, false, "", iterationErr
+		}
 		iterationErr := fmt.Errorf("stream creation error: %w", err)
 		a.applyLLMResponse(callCtx, nil, iterationErr)
 		return "", nil, false, "", a.handleIterationError(callCtx, events, iterationErr, "stream creation failed", "model", a.model)
@@ -1316,7 +1330,11 @@ func (a *Agent) runTool(ctx context.Context, toolCall ResponseToolCall, tool Too
 
 	result, err := tool.Execute(execCtx, toolCall.Arguments)
 	if err != nil {
-		a.logger.Error("tool execution failed", "tool", toolCall.Name, "error", err)
+		if errors.Is(err, context.Canceled) {
+			a.logger.Info("tool execution canceled", "tool", toolCall.Name, "error", err)
+		} else {
+			a.logger.Error("tool execution failed", "tool", toolCall.Name, "error", err)
+		}
 		return map[string]any{"error": err.Error()}, err
 	}
 
