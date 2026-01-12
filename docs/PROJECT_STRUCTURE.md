@@ -10,8 +10,7 @@ agentkit/
 ├── .gitignore             # Git ignore patterns
 ├── LICENSE                # MIT License
 ├── README.md              # Main documentation
-├── CONTRIBUTING.md        # Contribution guidelines
-├── SETUP_SUMMARY.md       # Setup instructions
+├── CHANGELOG.md           # Version history
 ├── Makefile               # Build commands
 ├── go.mod                 # Go module definition
 ├── go.sum                 # Go module checksums
@@ -53,7 +52,7 @@ All public APIs live in the root package for simplicity:
 - `subagent.go` - Sub-agent composition
 - `struct_schema.go` - Struct-based schemas
 - `llm_provider.go` - LLM provider interface
-- `mock_llm.go` - Mock LLM for testing
+- `testing.go` - Testing utilities (mock LLM)
 - `responses_api.go` - OpenAI Responses API
 
 ### `examples/`

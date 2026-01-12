@@ -24,8 +24,8 @@ agentkit/
 │   ├── subagent.go                 # Sub-agent composition
 │   ├── struct_schema.go            # Struct-based schemas
 │   ├── llm_provider.go             # LLM provider interface
-│   ├── mock_llm.go                 # Mock LLM for testing
 │   ├── responses_api.go            # OpenAI Responses API
+│   ├── testing.go                  # Testing utilities (mock LLM)
 │   ├── tool_concurrency.go         # Tool concurrency modes
 │   ├── event_helpers.go            # Event helper functions
 │   └── *_test.go                   # Comprehensive test suite
@@ -60,8 +60,7 @@ agentkit/
 ├── .gitignore                      # Git ignore patterns
 ├── LICENSE                         # MIT License
 ├── README.md                       # Main documentation
-├── CONTRIBUTING.md                 # Contribution guidelines
-├── SETUP_SUMMARY.md                # Initial setup summary
+├── CHANGELOG.md                    # Version history
 ├── Makefile                        # Build commands
 ├── go.mod                          # Go module definition
 └── go.sum                          # Go module checksums

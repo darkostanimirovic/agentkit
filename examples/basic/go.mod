@@ -1,9 +1,9 @@
 module example.com/basic
 
-go 1.23
+go 1.24.0
+
+toolchain go1.24.11
 
 require github.com/darkostanimirovic/agentkit v0.0.0
-
-require github.com/sashabaranov/go-openai v1.41.2 // indirect
 
 replace github.com/darkostanimirovic/agentkit => ../..

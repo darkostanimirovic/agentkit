@@ -500,10 +500,10 @@ agent, _ := agentkit.New(agentkit.Config{
 // Mock LLM for testing
 mockLLM := agentkit.NewMockLLM().
     WithResponse("I'll search for similar issues", []ToolCall{
-        {Name: "search_issues", Args: map[string]any{"query": "timeout"}},
+        {Name: "search_issues", Arguments: map[string]any{"query": "timeout"}},
     }).
     WithResponse("Found 3 issues, assigning to Infrastructure", []ToolCall{
-        {Name: "assign_team", Args: map[string]any{"team_slug": "infrastructure"}},
+        {Name: "assign_team", Arguments: map[string]any{"team_slug": "infrastructure"}},
     }).
     WithFinalResponse("Assigned to Infrastructure team")
 

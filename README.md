@@ -567,7 +567,7 @@ agent, _ := agentkit.New(agentkit.Config{
 ```go
 mock := agentkit.NewMockLLM().
     WithResponse("Searching...", []agentkit.ToolCall{
-        {Name: "search", Args: map[string]any{"query": "timeout"}},
+        {Name: "search", Arguments: map[string]any{"query": "timeout"}},
     }).
     WithFinalResponse("Done")
 
