@@ -149,30 +149,35 @@ func (p *Provider) toAPIRequest(req providers.CompletionRequest) apiRequest {
 }
 
 // toAPIInput converts messages to OpenAI input format.
-func (p *Provider) toAPIInput(messages []providers.Message) []input {
-	inputs := make([]input, 0, len(messages))
+func (p *Provider) toAPIInput(messages []providers.Message) []any {
+	inputs := make([]any, 0, len(messages))
 
 	for _, msg := range messages {
+		if msg.ToolCallID != "" {
+			inputs = append(inputs, functionCallOutput{
+				Type:   "function_call_output",
+				CallID: msg.ToolCallID,
+				Output: msg.Content,
+			})
+			continue
+		}
+
+		role := string(msg.Role)
 		in := input{
-			Role: string(msg.Role),
+			Role: role,
 		}
 
 		// Build content items
 		contentItems := []contentItem{}
 
 		if msg.Content != "" {
+			contentType := "input_text"
+			if msg.Role == providers.RoleAssistant {
+				contentType = "output_text"
+			}
 			contentItems = append(contentItems, contentItem{
-				Type: "input_text",
+				Type: contentType,
 				Text: msg.Content,
-			})
-		}
-
-		// Handle tool results
-		if msg.ToolCallID != "" {
-			contentItems = append(contentItems, contentItem{
-				Type:    "tool_result",
-				CallID:  msg.ToolCallID,
-				Content: msg.Content,
 			})
 		}
 
@@ -228,11 +233,13 @@ func (p *Provider) fromAPIResponse(resp *responseObject) *providers.CompletionRe
 			if item.Arguments != "" {
 				json.Unmarshal([]byte(item.Arguments), &args)
 			}
-			domainResp.ToolCalls = append(domainResp.ToolCalls, providers.ToolCall{
-				ID:        item.ID,
-				Name:      item.Name,
-				Arguments: args,
-			})
+			if item.CallID != "" {
+				domainResp.ToolCalls = append(domainResp.ToolCalls, providers.ToolCall{
+					ID:        item.CallID,
+					Name:      item.Name,
+					Arguments: args,
+				})
+			}
 		}
 	}
 
@@ -256,13 +263,16 @@ type streamReader struct {
 	reader     io.ReadCloser
 	buffer     string
 	logger     *slog.Logger
-	toolCalls  map[int]*toolCall
+	toolCalls  map[string]*toolCall
+	toolByItem map[string]*toolCall
 	textBuffer string
 	responseID string
+	pending    []*providers.StreamChunk
 }
 
 type toolCall struct {
 	ID        string
+	CallID    string
 	Name      string
 	Arguments string
 }
@@ -272,9 +282,10 @@ func newStreamReader(reader io.ReadCloser, logger *slog.Logger) *streamReader {
 		logger = slog.Default()
 	}
 	return &streamReader{
-		reader:    reader,
-		logger:    logger,
-		toolCalls: make(map[int]*toolCall),
+		reader:     reader,
+		logger:     logger,
+		toolCalls:  make(map[string]*toolCall),
+		toolByItem: make(map[string]*toolCall),
 	}
 }
 
@@ -307,6 +318,12 @@ func (s *streamReader) Close() error {
 }
 
 func (s *streamReader) parseNextChunk() *providers.StreamChunk {
+	if len(s.pending) > 0 {
+		chunk := s.pending[0]
+		s.pending = s.pending[1:]
+		return chunk
+	}
+
 	// Find next SSE event
 	idx := strings.Index(s.buffer, "\n\n")
 	if idx == -1 {
@@ -341,7 +358,20 @@ func (s *streamReader) parseNextChunk() *providers.StreamChunk {
 		return s.emitTextFinal(apiChunk.Text)
 	case "response.output_item.done":
 		if apiChunk.Item != nil {
+			if apiChunk.Item.Type == "function_call" {
+				if chunk := s.storeToolCallFromItem(*apiChunk.Item); chunk != nil {
+					return chunk
+				}
+				return nil
+			}
 			return s.emitTextFinal(extractOutputTextFromItem(*apiChunk.Item))
+		}
+	case "response.output_item.added":
+		if apiChunk.Item != nil && apiChunk.Item.Type == "function_call" {
+			if chunk := s.storeToolCallFromItem(*apiChunk.Item); chunk != nil {
+				return chunk
+			}
+			return nil
 		}
 	case "response.content_part.done":
 		if apiChunk.Part != nil && apiChunk.Part.Type == "output_text" {
@@ -349,24 +379,26 @@ func (s *streamReader) parseNextChunk() *providers.StreamChunk {
 		}
 
 	case "response.function_call_arguments.delta":
-		if s.toolCalls[apiChunk.OutputIndex] == nil {
-			s.toolCalls[apiChunk.OutputIndex] = &toolCall{
-				ID: apiChunk.ItemID,
-			}
+		tc := s.ensureToolCall(apiChunk.CallID, apiChunk.ItemID, apiChunk.OutputIndex)
+		tc.Arguments += apiChunk.Delta
+		if apiChunk.CallID == "" {
+			return nil
 		}
-		s.toolCalls[apiChunk.OutputIndex].Arguments += apiChunk.Delta
 		return &providers.StreamChunk{
-			ToolCallID: apiChunk.ItemID,
-			ToolArgs:   apiChunk.Delta,
+			ToolCallID: apiChunk.CallID,
 		}
 
 	case "response.function_call_arguments.done":
-		if tc := s.toolCalls[apiChunk.OutputIndex]; tc != nil {
+		tc := s.ensureToolCall(apiChunk.CallID, apiChunk.ItemID, apiChunk.OutputIndex)
+		if apiChunk.Name != "" {
 			tc.Name = apiChunk.Name
-			return &providers.StreamChunk{
-				ToolCallID: tc.ID,
-				ToolName:   tc.Name,
-				ToolArgs:   tc.Arguments,
+		}
+		if apiChunk.Arguments != "" {
+			tc.Arguments = apiChunk.Arguments
+		}
+		if tc != nil && tc.CallID != "" {
+			if chunk := buildToolChunkIfReady(tc); chunk != nil {
+				return chunk
 			}
 		}
 
@@ -394,11 +426,18 @@ func (s *streamReader) parseNextChunk() *providers.StreamChunk {
 			chunk.FinishReason = providers.FinishReasonToolCalls
 		}
 		if apiChunk.Response != nil {
+			if toolChunks := streamChunksFromResponseTools(apiChunk.Response); len(toolChunks) > 0 {
+				s.pending = append(s.pending, toolChunks...)
+				chunk.FinishReason = providers.FinishReasonToolCalls
+			}
 			if delta := s.emitTextFinal(extractOutputTextFromResponse(apiChunk.Response)); delta != nil {
 				chunk.Content = delta.Content
 			}
 		}
-		return chunk
+		s.pending = append(s.pending, chunk)
+		next := s.pending[0]
+		s.pending = s.pending[1:]
+		return next
 	}
 
 	return nil
@@ -412,6 +451,106 @@ func extractSSEData(event string) string {
 		}
 	}
 	return ""
+}
+
+func toolCallID(callID, itemID string) string {
+	if callID != "" {
+		return callID
+	}
+	return itemID
+}
+
+func toolCallKey(callID, itemID string, outputIndex int) string {
+	if callID != "" {
+		return callID
+	}
+	if itemID != "" {
+		return itemID
+	}
+	return fmt.Sprintf("index-%d", outputIndex)
+}
+
+func (s *streamReader) ensureToolCall(callID, itemID string, outputIndex int) *toolCall {
+	if itemID != "" {
+		if tc := s.toolByItem[itemID]; tc != nil {
+			if callID != "" {
+				tc.CallID = callID
+				s.toolCalls[callID] = tc
+			}
+			return tc
+		}
+	}
+	if callID != "" {
+		if tc := s.toolCalls[callID]; tc != nil {
+			if itemID != "" && tc.ID == "" {
+				tc.ID = itemID
+				s.toolByItem[itemID] = tc
+			}
+			return tc
+		}
+	}
+	key := toolCallKey(callID, itemID, outputIndex)
+	if tc := s.toolCalls[key]; tc != nil {
+		return tc
+	}
+	tc := &toolCall{
+		ID:     itemID,
+		CallID: callID,
+	}
+	s.toolCalls[key] = tc
+	if itemID != "" {
+		s.toolByItem[itemID] = tc
+	}
+	if callID != "" {
+		s.toolCalls[callID] = tc
+	}
+	return tc
+}
+
+func buildToolChunkIfReady(tc *toolCall) *providers.StreamChunk {
+	if tc == nil || tc.CallID == "" || tc.Name == "" || tc.Arguments == "" {
+		return nil
+	}
+	return &providers.StreamChunk{
+		ToolCallID: tc.CallID,
+		ToolName:   tc.Name,
+		ToolArgs:   tc.Arguments,
+	}
+}
+
+func (s *streamReader) storeToolCallFromItem(item outputItem) *providers.StreamChunk {
+	if item.Type != "function_call" {
+		return nil
+	}
+	itemID := item.ID
+	if itemID == "" {
+		itemID = item.CallID
+	}
+	if itemID == "" {
+		return nil
+	}
+	tc := s.toolByItem[itemID]
+	if tc == nil {
+		tc = &toolCall{ID: item.ID, CallID: item.CallID}
+		s.toolByItem[itemID] = tc
+		if item.CallID != "" {
+			s.toolCalls[item.CallID] = tc
+		}
+		if item.ID != "" {
+			s.toolCalls[item.ID] = tc
+		}
+	}
+	if item.Name != "" {
+		tc.Name = item.Name
+	}
+	if item.Arguments != "" {
+		tc.Arguments = item.Arguments
+	}
+	if tc.CallID == "" && item.CallID != "" {
+		tc.CallID = item.CallID
+		s.toolCalls[item.CallID] = tc
+	}
+	return buildToolChunkIfReady(tc)
 }
 
 func (s *streamReader) emitTextDelta(delta string) *providers.StreamChunk {
@@ -470,12 +609,38 @@ func extractOutputTextFromResponse(resp *responseObject) string {
 	return builder.String()
 }
 
+func streamChunkFromFunctionCall(item outputItem) *providers.StreamChunk {
+	if item.CallID == "" {
+		return nil
+	}
+	return &providers.StreamChunk{
+		ToolCallID: item.CallID,
+		ToolName:   item.Name,
+		ToolArgs:   item.Arguments,
+	}
+}
+
+func streamChunksFromResponseTools(resp *responseObject) []*providers.StreamChunk {
+	if resp == nil {
+		return nil
+	}
+	var chunks []*providers.StreamChunk
+	for _, item := range resp.Output {
+		if item.Type == "function_call" {
+			if chunk := streamChunkFromFunctionCall(item); chunk != nil {
+				chunks = append(chunks, chunk)
+			}
+		}
+	}
+	return chunks
+}
+
 // OpenAI API types (internal to this package)
 
 type apiRequest struct {
 	Model             string            `json:"model"`
 	Instructions      string            `json:"instructions,omitempty"`
-	Input             []input           `json:"input,omitempty"`
+	Input             any               `json:"input,omitempty"`
 	Tools             []tool            `json:"tools,omitempty"`
 	ToolChoice        string            `json:"tool_choice,omitempty"`
 	Temperature       float32           `json:"temperature,omitempty"`
@@ -490,6 +655,12 @@ type apiRequest struct {
 type input struct {
 	Role    string        `json:"role"`
 	Content []contentItem `json:"content"`
+}
+
+type functionCallOutput struct {
+	Type   string `json:"type"`
+	CallID string `json:"call_id"`
+	Output string `json:"output"`
 }
 
 type contentItem struct {
@@ -544,10 +715,12 @@ type streamChunk struct {
 	Type        string          `json:"type"`
 	ResponseID  string          `json:"response_id,omitempty"`
 	ItemID      string          `json:"item_id,omitempty"`
+	CallID      string          `json:"call_id,omitempty"`
 	OutputIndex int             `json:"output_index,omitempty"`
 	Delta       string          `json:"delta,omitempty"`
 	Text        string          `json:"text,omitempty"`
 	Name        string          `json:"name,omitempty"`
+	Arguments   string          `json:"arguments,omitempty"`
 	Usage       *usage          `json:"usage,omitempty"`
 	Response    *responseObject `json:"response,omitempty"`
 	Item        *outputItem     `json:"item,omitempty"`

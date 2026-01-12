@@ -447,17 +447,17 @@ func (a *Agent) Run(ctx context.Context, userMessage string) <-chan Event {
 		}
 
 		execCtx = a.applyAgentStart(execCtx, userMessage)
-		
+
 		agentName := "agent"
 		a.emit(execCtx, runLoopChan, AgentStart(agentName))
-		
+
 		finalOutput, runErr := a.runLoop(execCtx, userMessage, runLoopChan)
 		a.applyAgentComplete(execCtx, finalOutput, runErr)
-		
+
 		// Always emit final output event (even if empty)
 		// Empty output is still a valid completion state that clients need to know about
 		a.emit(execCtx, runLoopChan, FinalOutput("", finalOutput))
-		
+
 		duration := time.Since(startTime).Milliseconds()
 		a.emit(execCtx, runLoopChan, AgentComplete(agentName, finalOutput, 0, 0, duration))
 
@@ -492,19 +492,21 @@ func (a *Agent) runLoop(ctx context.Context, userMessage string, events chan<- E
 		a.logger.Debug("agent iteration", "iteration", iteration, "max", a.maxIterations)
 
 		req := a.buildCompletionRequest(conversationHistory)
-		
+
 		var resp *providers.CompletionResponse
 		var err error
-		
+
 		if a.streamResponses {
 			resp, err = a.runStreamingIteration(ctx, req, events)
 		} else {
 			resp, err = a.runNonStreamingIteration(ctx, req, events)
 		}
-		
+
 		if err != nil {
 			return finalOutput, err
 		}
+
+		resp.ToolCalls = filterCompleteToolCalls(resp.ToolCalls)
 
 		assistantMsg := providers.Message{
 			Role:      providers.RoleAssistant,
@@ -569,7 +571,6 @@ func (a *Agent) handleIterationError(ctx context.Context, events chan<- Event, e
 
 // Helper methods for tracing integration
 
-
 // llmCallTiming holds timing information for an LLM call
 type llmCallTiming struct {
 	startTime           time.Time
@@ -610,7 +611,6 @@ func extractLLMCallTiming(ctx context.Context) llmCallTiming {
 		endTime:   now,
 	}
 }
-
 
 // ApprovalHandler is called when a tool requires approval before execution
 // Returns true to approve, false to deny
@@ -653,7 +653,6 @@ func (c ApprovalConfig) requiresApproval(toolName string) bool {
 
 	return false
 }
-
 
 // ErrDepsNotFound is returned when dependencies are not found in context
 var ErrDepsNotFound = errors.New("agentkit: dependencies not found in context")
@@ -758,7 +757,6 @@ func GetTracer(ctx context.Context) Tracer {
 	return tracer
 }
 
-
 // buildCompletionRequest creates a provider-agnostic completion request from current conversation state.
 func (a *Agent) buildCompletionRequest(conversationHistory []providers.Message) providers.CompletionRequest {
 	// Build tool definitions
@@ -774,7 +772,7 @@ func (a *Agent) buildCompletionRequest(conversationHistory []providers.Message) 
 		Tools:             tools,
 		Temperature:       a.temperature,
 		MaxTokens:         0, // Let provider use default
-		TopP:              0,  // Let provider use default
+		TopP:              0, // Let provider use default
 		ToolChoice:        "auto",
 		ParallelToolCalls: true,
 		ReasoningEffort:   a.reasoningEffort,
@@ -800,14 +798,14 @@ func (a *Agent) runNonStreamingIteration(ctx context.Context, req providers.Comp
 		a.applyLLMResponse(callCtx, nil, iterationErr)
 		return nil, a.handleIterationError(callCtx, events, iterationErr, "completion failed", "model", a.model)
 	}
-	
+
 	a.applyLLMResponse(callCtx, resp, nil)
 
 	// TODO: Re-enable tracing after refactoring to use Tracer.LogGeneration
 	// a.logLLMGeneration(callCtx, req, resp)
 
 	if a.loggingConfig.LogResponses {
-		a.logger.Info("completion received", 
+		a.logger.Info("completion received",
 			"content_length", len(resp.Content),
 			"tool_calls", len(resp.ToolCalls),
 			"finish_reason", resp.FinishReason)
@@ -843,6 +841,7 @@ func (a *Agent) runStreamingIteration(ctx context.Context, req providers.Complet
 
 	// Track tool calls being built
 	activeToolCalls := make(map[string]*providers.ToolCall)
+	toolArgsRaw := make(map[string]string)
 
 	for {
 		chunk, err := stream.Next()
@@ -871,8 +870,13 @@ func (a *Agent) runStreamingIteration(ctx context.Context, req providers.Complet
 			if chunk.ToolName != "" {
 				tc.Name = chunk.ToolName
 			}
-			// Note: ToolArgs come as delta, would need to accumulate and parse at end
-			// For now, we'll handle this when chunk.IsComplete
+			if chunk.ToolArgs != "" {
+				toolArgsRaw[chunk.ToolCallID] = chunk.ToolArgs
+				var args map[string]any
+				if err := json.Unmarshal([]byte(chunk.ToolArgs), &args); err == nil {
+					tc.Arguments = args
+				}
+			}
 		}
 
 		// Handle completion
@@ -881,9 +885,20 @@ func (a *Agent) runStreamingIteration(ctx context.Context, req providers.Complet
 			if chunk.Usage != nil {
 				usage = chunk.Usage
 			}
-			
+
 			// Collect completed tool calls
 			for _, tc := range activeToolCalls {
+				if len(tc.Arguments) == 0 {
+					if raw, ok := toolArgsRaw[tc.ID]; ok {
+						var args map[string]any
+						if err := json.Unmarshal([]byte(raw), &args); err == nil {
+							tc.Arguments = args
+						}
+					}
+				}
+				if tc.ID == "" || tc.Name == "" || len(tc.Arguments) == 0 {
+					continue
+				}
 				toolCalls = append(toolCalls, *tc)
 			}
 			break
@@ -902,13 +917,12 @@ func (a *Agent) runStreamingIteration(ctx context.Context, req providers.Complet
 	}
 
 	a.applyLLMResponse(callCtx, resp, nil)
-	
+
 	// TODO: Re-enable tracing after refactoring to use Tracer.LogGeneration
 	// a.logLLMGeneration(callCtx, req, resp)
 
 	return resp, nil
 }
-
 
 // executeToolCalls executes all tool calls and returns messages for the conversation history.
 func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []providers.ToolCall, events chan<- Event) []providers.Message {
@@ -917,24 +931,24 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []providers.Tool
 	}
 
 	messages := make([]providers.Message, 0, len(toolCalls))
-	
+
 	if a.parallelConfig.Enabled {
 		messages = a.executeToolCallsParallel(ctx, toolCalls, events)
 	} else {
 		messages = a.executeToolCallsSequential(ctx, toolCalls, events)
 	}
-	
+
 	return messages
 }
 
 func (a *Agent) executeToolCallsSequential(ctx context.Context, toolCalls []providers.ToolCall, events chan<- Event) []providers.Message {
 	messages := make([]providers.Message, 0, len(toolCalls))
-	
+
 	for _, call := range toolCalls {
 		msg := a.executeToolCall(ctx, call, events)
 		messages = append(messages, msg)
 	}
-	
+
 	return messages
 }
 
@@ -943,10 +957,10 @@ func (a *Agent) executeToolCallsParallel(ctx context.Context, toolCalls []provid
 		index int
 		msg   providers.Message
 	}
-	
+
 	resultChan := make(chan result, len(toolCalls))
 	sem := make(chan struct{}, a.parallelConfig.MaxConcurrent)
-	
+
 	for i, call := range toolCalls {
 		sem <- struct{}{}
 		go func(idx int, tc providers.ToolCall) {
@@ -955,25 +969,39 @@ func (a *Agent) executeToolCallsParallel(ctx context.Context, toolCalls []provid
 			resultChan <- result{index: idx, msg: msg}
 		}(i, call)
 	}
-	
+
 	// Collect results
 	results := make([]result, 0, len(toolCalls))
 	for i := 0; i < len(toolCalls); i++ {
 		results = append(results, <-resultChan)
 	}
-	
+
 	// Sort by original order
 	messages := make([]providers.Message, len(toolCalls))
 	for _, r := range results {
 		messages[r.index] = r.msg
 	}
-	
+
 	return messages
+}
+
+func filterCompleteToolCalls(toolCalls []providers.ToolCall) []providers.ToolCall {
+	if len(toolCalls) == 0 {
+		return toolCalls
+	}
+	filtered := make([]providers.ToolCall, 0, len(toolCalls))
+	for _, tc := range toolCalls {
+		if tc.ID == "" || tc.Name == "" || len(tc.Arguments) == 0 {
+			continue
+		}
+		filtered = append(filtered, tc)
+	}
+	return filtered
 }
 
 func (a *Agent) executeToolCall(ctx context.Context, toolCall providers.ToolCall, events chan<- Event) providers.Message {
 	tool, exists := a.tools[toolCall.Name]
-	
+
 	// Check if tool exists
 	if !exists {
 		a.logger.Warn("tool not found", "tool", toolCall.Name)
@@ -1003,7 +1031,7 @@ func (a *Agent) executeToolCall(ctx context.Context, toolCall providers.ToolCall
 	// Execute tool with retry
 	var result any
 	var err error
-	
+
 	// Marshal arguments to JSON string for tool.Execute
 	argsJSON, err := json.Marshal(toolCall.Arguments)
 	if err != nil {
@@ -1015,7 +1043,7 @@ func (a *Agent) executeToolCall(ctx context.Context, toolCall providers.ToolCall
 			ToolCallID: toolCall.ID,
 		}
 	}
-	
+
 	result, err = retry.WithRetry(toolCtx, a.retryConfig, func() (any, error) {
 		return tool.Execute(toolCtx, string(argsJSON))
 	})
@@ -1090,7 +1118,7 @@ func formatToolResult(result any) string {
 	if result == nil {
 		return "null"
 	}
-	
+
 	switch v := result.(type) {
 	case string:
 		return v
