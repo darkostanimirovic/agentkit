@@ -44,7 +44,7 @@ func (p *Provider) Name() string {
 // Complete generates a non-streaming completion.
 func (p *Provider) Complete(ctx context.Context, req providers.CompletionRequest) (*providers.CompletionResponse, error) {
 	apiReq := p.toAPIRequest(req)
-	
+
 	jsonData, err := json.Marshal(apiReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
@@ -117,15 +117,15 @@ func (p *Provider) Stream(ctx context.Context, req providers.CompletionRequest) 
 // toAPIRequest converts provider-agnostic request to OpenAI API format.
 func (p *Provider) toAPIRequest(req providers.CompletionRequest) apiRequest {
 	apiReq := apiRequest{
-		Model:              req.Model,
-		Instructions:       req.SystemPrompt,
-		Temperature:        req.Temperature,
-		MaxOutputTokens:    req.MaxTokens,
-		TopP:               req.TopP,
-		Stream:             req.Stream,
-		ParallelToolCalls:  req.ParallelToolCalls,
-		Metadata:           req.Metadata,
-		ToolChoice:         req.ToolChoice,
+		Model:             req.Model,
+		Instructions:      req.SystemPrompt,
+		Temperature:       req.Temperature,
+		MaxOutputTokens:   req.MaxTokens,
+		TopP:              req.TopP,
+		Stream:            req.Stream,
+		ParallelToolCalls: req.ParallelToolCalls,
+		Metadata:          req.Metadata,
+		ToolChoice:        req.ToolChoice,
 	}
 
 	// Convert messages to input
@@ -151,7 +151,7 @@ func (p *Provider) toAPIRequest(req providers.CompletionRequest) apiRequest {
 // toAPIInput converts messages to OpenAI input format.
 func (p *Provider) toAPIInput(messages []providers.Message) []input {
 	inputs := make([]input, 0, len(messages))
-	
+
 	for _, msg := range messages {
 		in := input{
 			Role: string(msg.Role),
@@ -159,7 +159,7 @@ func (p *Provider) toAPIInput(messages []providers.Message) []input {
 
 		// Build content items
 		contentItems := []contentItem{}
-		
+
 		if msg.Content != "" {
 			contentItems = append(contentItems, contentItem{
 				Type: "input_text",
@@ -336,9 +336,16 @@ func (s *streamReader) parseNextChunk() *providers.StreamChunk {
 	// Handle different event types
 	switch apiChunk.Type {
 	case "response.output_text.delta":
-		s.textBuffer += apiChunk.Delta
-		return &providers.StreamChunk{
-			Content: apiChunk.Delta,
+		return s.emitTextDelta(apiChunk.Delta)
+	case "response.output_text.done":
+		return s.emitTextFinal(apiChunk.Text)
+	case "response.output_item.done":
+		if apiChunk.Item != nil {
+			return s.emitTextFinal(extractOutputTextFromItem(*apiChunk.Item))
+		}
+	case "response.content_part.done":
+		if apiChunk.Part != nil && apiChunk.Part.Type == "output_text" {
+			return s.emitTextFinal(apiChunk.Part.Text)
 		}
 
 	case "response.function_call_arguments.delta":
@@ -363,7 +370,7 @@ func (s *streamReader) parseNextChunk() *providers.StreamChunk {
 			}
 		}
 
-	case "response.done":
+	case "response.done", "response.completed":
 		chunk := &providers.StreamChunk{
 			IsComplete:   true,
 			FinishReason: providers.FinishReasonStop,
@@ -386,6 +393,11 @@ func (s *streamReader) parseNextChunk() *providers.StreamChunk {
 		if len(s.toolCalls) > 0 {
 			chunk.FinishReason = providers.FinishReasonToolCalls
 		}
+		if apiChunk.Response != nil {
+			if delta := s.emitTextFinal(extractOutputTextFromResponse(apiChunk.Response)); delta != nil {
+				chunk.Content = delta.Content
+			}
+		}
 		return chunk
 	}
 
@@ -402,21 +414,77 @@ func extractSSEData(event string) string {
 	return ""
 }
 
+func (s *streamReader) emitTextDelta(delta string) *providers.StreamChunk {
+	if delta == "" {
+		return nil
+	}
+	s.textBuffer += delta
+	return &providers.StreamChunk{
+		Content: delta,
+	}
+}
+
+func (s *streamReader) emitTextFinal(text string) *providers.StreamChunk {
+	if text == "" {
+		return nil
+	}
+	delta := text
+	if s.textBuffer != "" && strings.HasPrefix(text, s.textBuffer) {
+		delta = text[len(s.textBuffer):]
+	}
+	if delta == "" {
+		s.textBuffer = text
+		return nil
+	}
+	s.textBuffer = text
+	return &providers.StreamChunk{
+		Content: delta,
+	}
+}
+
+func extractOutputText(items []contentItem) string {
+	var builder strings.Builder
+	for _, item := range items {
+		if item.Type == "output_text" && item.Text != "" {
+			builder.WriteString(item.Text)
+		}
+	}
+	return builder.String()
+}
+
+func extractOutputTextFromItem(item outputItem) string {
+	if item.Type != "message" {
+		return ""
+	}
+	return extractOutputText(item.Content)
+}
+
+func extractOutputTextFromResponse(resp *responseObject) string {
+	if resp == nil {
+		return ""
+	}
+	var builder strings.Builder
+	for _, item := range resp.Output {
+		builder.WriteString(extractOutputTextFromItem(item))
+	}
+	return builder.String()
+}
+
 // OpenAI API types (internal to this package)
 
 type apiRequest struct {
-	Model              string            `json:"model"`
-	Instructions       string            `json:"instructions,omitempty"`
-	Input              []input           `json:"input,omitempty"`
-	Tools              []tool            `json:"tools,omitempty"`
-	ToolChoice         string            `json:"tool_choice,omitempty"`
-	Temperature        float32           `json:"temperature,omitempty"`
-	MaxOutputTokens    int               `json:"max_output_tokens,omitempty"`
-	TopP               float32           `json:"top_p,omitempty"`
-	Stream             bool              `json:"stream,omitempty"`
-	ParallelToolCalls  bool              `json:"parallel_tool_calls,omitempty"`
-	Reasoning          *reasoning        `json:"reasoning,omitempty"`
-	Metadata           map[string]string `json:"metadata,omitempty"`
+	Model             string            `json:"model"`
+	Instructions      string            `json:"instructions,omitempty"`
+	Input             []input           `json:"input,omitempty"`
+	Tools             []tool            `json:"tools,omitempty"`
+	ToolChoice        string            `json:"tool_choice,omitempty"`
+	Temperature       float32           `json:"temperature,omitempty"`
+	MaxOutputTokens   int               `json:"max_output_tokens,omitempty"`
+	TopP              float32           `json:"top_p,omitempty"`
+	Stream            bool              `json:"stream,omitempty"`
+	ParallelToolCalls bool              `json:"parallel_tool_calls,omitempty"`
+	Reasoning         *reasoning        `json:"reasoning,omitempty"`
+	Metadata          map[string]string `json:"metadata,omitempty"`
 }
 
 type input struct {
@@ -478,9 +546,12 @@ type streamChunk struct {
 	ItemID      string          `json:"item_id,omitempty"`
 	OutputIndex int             `json:"output_index,omitempty"`
 	Delta       string          `json:"delta,omitempty"`
+	Text        string          `json:"text,omitempty"`
 	Name        string          `json:"name,omitempty"`
 	Usage       *usage          `json:"usage,omitempty"`
 	Response    *responseObject `json:"response,omitempty"`
+	Item        *outputItem     `json:"item,omitempty"`
+	Part        *contentItem    `json:"part,omitempty"`
 }
 
 type apiError struct {

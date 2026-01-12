@@ -655,3 +655,58 @@ func TestE2E_ConcurrentAgents(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+// TestE2E_EmptyResponseHandling tests that empty LLM responses are handled correctly
+func TestE2E_EmptyResponseHandling(t *testing.T) {
+	// Simulate LLM returning empty response (no content, no tool calls)
+	mock := NewMockLLM().WithResponse("", nil)
+	
+	agent, err := New(Config{
+		Model:       "gpt-4o",
+		LLMProvider: mock,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create agent: %v", err)
+	}
+	
+	ctx := context.Background()
+	events := agent.Run(ctx, "Test prompt")
+	
+	var sawStart bool
+	var sawFinalOutput bool
+	var sawComplete bool
+	var finalOutput string
+	
+	for event := range events {
+		switch event.Type {
+		case EventTypeAgentStart:
+			sawStart = true
+		case EventTypeFinalOutput:
+			sawFinalOutput = true
+			if response, ok := event.Data["response"].(string); ok {
+				finalOutput = response
+			}
+		case EventTypeAgentComplete:
+			sawComplete = true
+		}
+	}
+	
+	// Verify complete event lifecycle even with empty response
+	if !sawStart {
+		t.Error("Missing agent.start event")
+	}
+	
+	if !sawFinalOutput {
+		t.Error("Missing final_output event (should be emitted even when empty)")
+	}
+	
+	if !sawComplete {
+		t.Error("Missing agent.complete event")
+	}
+	
+	if finalOutput != "" {
+		t.Errorf("Expected empty response, got: %s", finalOutput)
+	}
+	
+	t.Log("Empty response properly handled with complete event lifecycle")
+}

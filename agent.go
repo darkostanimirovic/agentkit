@@ -454,10 +454,9 @@ func (a *Agent) Run(ctx context.Context, userMessage string) <-chan Event {
 		finalOutput, runErr := a.runLoop(execCtx, userMessage, runLoopChan)
 		a.applyAgentComplete(execCtx, finalOutput, runErr)
 		
-		// Emit final output event if we have output
-		if finalOutput != "" {
-			a.emit(execCtx, runLoopChan, FinalOutput("", finalOutput))
-		}
+		// Always emit final output event (even if empty)
+		// Empty output is still a valid completion state that clients need to know about
+		a.emit(execCtx, runLoopChan, FinalOutput("", finalOutput))
 		
 		duration := time.Since(startTime).Milliseconds()
 		a.emit(execCtx, runLoopChan, AgentComplete(agentName, finalOutput, 0, 0, duration))
