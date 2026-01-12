@@ -181,8 +181,27 @@ func (p *Provider) toAPIInput(messages []providers.Message) []any {
 			})
 		}
 
-		in.Content = contentItems
-		inputs = append(inputs, in)
+		if len(contentItems) > 0 {
+			in.Content = contentItems
+			inputs = append(inputs, in)
+		}
+
+		if msg.Role == providers.RoleAssistant && len(msg.ToolCalls) > 0 {
+			for _, call := range msg.ToolCalls {
+				args := ""
+				if call.Arguments != nil {
+					if data, err := json.Marshal(call.Arguments); err == nil {
+						args = string(data)
+					}
+				}
+				inputs = append(inputs, functionCallInput{
+					Type:      "function_call",
+					Name:      call.Name,
+					CallID:    call.ID,
+					Arguments: args,
+				})
+			}
+		}
 	}
 
 	return inputs
@@ -372,6 +391,10 @@ func (s *streamReader) parseNextChunk() *providers.StreamChunk {
 				return chunk
 			}
 			return nil
+		}
+	case "response.content_part.delta":
+		if apiChunk.Part != nil && apiChunk.Part.Type == "output_text" {
+			return s.emitTextDelta(apiChunk.Part.Text)
 		}
 	case "response.content_part.done":
 		if apiChunk.Part != nil && apiChunk.Part.Type == "output_text" {
@@ -661,6 +684,13 @@ type functionCallOutput struct {
 	Type   string `json:"type"`
 	CallID string `json:"call_id"`
 	Output string `json:"output"`
+}
+
+type functionCallInput struct {
+	Type      string `json:"type"`
+	Name      string `json:"name"`
+	CallID    string `json:"call_id"`
+	Arguments string `json:"arguments"`
 }
 
 type contentItem struct {

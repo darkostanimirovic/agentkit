@@ -16,8 +16,8 @@ type Handoff struct {
 }
 
 type handoffOptions struct {
-	fullContext bool          // Whether to return full conversation context OR just final result (real-time streaming always happens)
-	maxTurns    int           // Limit on conversation turns for the handoff
+	fullContext bool           // Whether to return full conversation context OR just final result (real-time streaming always happens)
+	maxTurns    int            // Limit on conversation turns for the handoff
 	context     HandoffContext // Additional context to provide
 }
 
@@ -57,10 +57,10 @@ func WithContext(ctx HandoffContext) HandoffOption {
 
 // HandoffResult contains the outcome of a delegation.
 type HandoffResult struct {
-	Response string              // The final response from the delegated agent
-	Summary  string              // Optional summary of the work done
-	Trace    []HandoffTraceItem  // Execution trace (if fullContext was enabled)
-	Metadata map[string]any      // Additional result metadata
+	Response string             // The final response from the delegated agent
+	Summary  string             // Optional summary of the work done
+	Trace    []HandoffTraceItem // Execution trace (if fullContext was enabled)
+	Metadata map[string]any     // Additional result metadata
 }
 
 // HandoffTraceItem represents a single step in the delegated agent's execution.
@@ -211,7 +211,7 @@ func (h *HandoffConfiguration) AsTool(name, description string) Tool {
 
 			// Execute the handoff with proper trace context
 			response, summary, trace, err := executeHandoff(spanCtx, &delegatedAgent, fullTask, opts)
-			
+
 			// Emit handoff.complete event
 			if parentPub, hasParent := GetEventPublisher(spanCtx); hasParent {
 				if err != nil {
@@ -220,7 +220,7 @@ func (h *HandoffConfiguration) AsTool(name, description string) Tool {
 					parentPub(HandoffComplete(h.from.getAgentName(), h.to.getAgentName(), response))
 				}
 			}
-			
+
 			if err != nil {
 				if parentTracer != nil && spanCtx != nil {
 					parentTracer.SetSpanAttributes(spanCtx, map[string]any{
@@ -258,13 +258,13 @@ func (h *HandoffConfiguration) AsTool(name, description string) Tool {
 // Handoff delegates a task to another agent.
 // The receiving agent works independently with an isolated context,
 // then returns the result. The delegating agent can optionally see
-// the full execution trace (thinking, tool calls, etc.) to understand 
+// the full execution trace (thinking, tool calls, etc.) to understand
 // how the work was done. Real-time event streaming to parent ALWAYS happens.
 //
 // Example:
 //
 //	researchAgent := agentkit.NewAgent(researchConfig)
-//	result, err := coordinator.Handoff(ctx, researchAgent, 
+//	result, err := coordinator.Handoff(ctx, researchAgent,
 //	    "Research the top 3 Go web frameworks in 2026",
 //	    WithFullContext(true),
 //	)
@@ -333,7 +333,7 @@ func (a *Agent) Handoff(ctx context.Context, to *Agent, task string, opts ...Han
 
 	// Execute the handoff in isolation
 	response, summary, trace, err := executeHandoff(spanCtx, &delegatedAgent, fullTask, options)
-	
+
 	// Emit handoff.complete event
 	if parentPub, hasParent := GetEventPublisher(spanCtx); hasParent {
 		if err != nil {
@@ -342,7 +342,7 @@ func (a *Agent) Handoff(ctx context.Context, to *Agent, task string, opts ...Han
 			parentPub(HandoffComplete(a.getAgentName(), to.getAgentName(), response))
 		}
 	}
-	
+
 	if err != nil {
 		if parentTracer != nil && spanCtx != nil {
 			parentTracer.SetSpanAttributes(spanCtx, map[string]any{
@@ -390,7 +390,7 @@ func executeHandoff(ctx context.Context, agent *Agent, task string, opts handoff
 	// Capture trace items if requested
 	var lastContent string
 	var runErr error
-	
+
 	for event := range events {
 		// ALWAYS forward events to parent if available (real-time streaming)
 		if hasParent {
@@ -495,7 +495,7 @@ func (a *Agent) getAgentName() string {
 //
 //	researchAgent := agentkit.NewAgent(researchConfig)
 //	coordinatorAgent := agentkit.NewAgent(coordinatorConfig)
-//	
+//
 //	// Register as a tool
 //	coordinatorAgent.RegisterTool(researchAgent.AsHandoffTool(
 //	    "research_agent",
@@ -504,6 +504,8 @@ func (a *Agent) getAgentName() string {
 func (a *Agent) AsHandoffTool(name, description string, opts ...HandoffOption) Tool {
 	return NewTool(name).
 		WithDescription(description).
+		WithParameter("task", String().Required().WithDescription("Task to delegate to the specialist")).
+		WithParameter("background", String().Optional().WithDescription("Optional background or context for the task")).
 		WithHandler(func(ctx context.Context, args map[string]any) (any, error) {
 			// Extract task from args
 			task, ok := args["task"].(string)
@@ -519,12 +521,12 @@ func (a *Agent) AsHandoffTool(name, description string, opts ...HandoffOption) T
 				fullContext: true,
 				maxTurns:    10,
 			}
-			
+
 			// Extract background from args if present
 			if background, ok := args["background"].(string); ok {
 				handoffOpts.context.Background = background
 			}
-			
+
 			// Apply any provided options
 			for _, opt := range opts {
 				opt(&handoffOpts)
@@ -582,7 +584,7 @@ func (a *Agent) AsHandoffTool(name, description string, opts ...HandoffOption) T
 
 			// Execute the handoff with proper trace context
 			response, summary, trace, err := executeHandoff(spanCtx, &delegatedAgent, fullTask, handoffOpts)
-			
+
 			// Emit handoff.complete event
 			if parentPub, hasParent := GetEventPublisher(spanCtx); hasParent {
 				if err != nil {
@@ -591,7 +593,7 @@ func (a *Agent) AsHandoffTool(name, description string, opts ...HandoffOption) T
 					parentPub(HandoffComplete(fromAgentName, toAgentName, response))
 				}
 			}
-			
+
 			if err != nil {
 				if parentTracer != nil && spanCtx != nil {
 					parentTracer.SetSpanAttributes(spanCtx, map[string]any{
@@ -616,7 +618,7 @@ func (a *Agent) AsHandoffTool(name, description string, opts ...HandoffOption) T
 				Summary:  summary,
 				Metadata: make(map[string]any),
 			}
-			
+
 			if handoffOpts.fullContext {
 				result.Trace = trace
 			}
