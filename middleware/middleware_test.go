@@ -9,6 +9,41 @@ import (
 	"github.com/darkostanimirovic/agentkit/middleware"
 )
 
+func TestBaseMiddleware(t *testing.T) {
+	bm := middleware.BaseMiddleware{}
+	ctx := context.Background()
+
+	// Test OnAgentStart - should return context
+	newCtx := bm.OnAgentStart(ctx, "test input")
+	if newCtx != ctx {
+		t.Error("Expected OnAgentStart to return same context")
+	}
+
+	// Test OnAgentComplete - should not panic
+	bm.OnAgentComplete(ctx, "test output", nil)
+	bm.OnAgentComplete(ctx, "", context.Canceled)
+
+	// Test OnToolStart - should return context
+	newCtx = bm.OnToolStart(ctx, "test_tool", map[string]any{"key": "value"})
+	if newCtx != ctx {
+		t.Error("Expected OnToolStart to return same context")
+	}
+
+	// Test OnToolComplete - should not panic
+	bm.OnToolComplete(ctx, "test_tool", "result", nil)
+	bm.OnToolComplete(ctx, "test_tool", nil, context.Canceled)
+
+	// Test OnLLMCall - should return context
+	newCtx = bm.OnLLMCall(ctx, "test request")
+	if newCtx != ctx {
+		t.Error("Expected OnLLMCall to return same context")
+	}
+
+	// Test OnLLMResponse - should not panic
+	bm.OnLLMResponse(ctx, "test response", nil)
+	bm.OnLLMResponse(ctx, nil, context.Canceled)
+}
+
 type recordingMiddleware struct {
 	middleware.BaseMiddleware
 	mu             sync.Mutex

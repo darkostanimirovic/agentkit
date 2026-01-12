@@ -3,11 +3,13 @@ package agentkit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
+
 	"github.com/darkostanimirovic/agentkit/internal/conversation"
 	"github.com/darkostanimirovic/agentkit/internal/logging"
 	"github.com/darkostanimirovic/agentkit/internal/parallel"
@@ -16,7 +18,6 @@ import (
 	"github.com/darkostanimirovic/agentkit/middleware"
 	"github.com/darkostanimirovic/agentkit/providers"
 	"github.com/darkostanimirovic/agentkit/providers/openai"
-	"encoding/json"
 )
 
 // Type aliases for internal package types
@@ -452,6 +453,11 @@ func (a *Agent) Run(ctx context.Context, userMessage string) <-chan Event {
 		
 		finalOutput, runErr := a.runLoop(execCtx, userMessage, runLoopChan)
 		a.applyAgentComplete(execCtx, finalOutput, runErr)
+		
+		// Emit final output event if we have output
+		if finalOutput != "" {
+			a.emit(execCtx, runLoopChan, FinalOutput("", finalOutput))
+		}
 		
 		duration := time.Since(startTime).Milliseconds()
 		a.emit(execCtx, runLoopChan, AgentComplete(agentName, finalOutput, 0, 0, duration))
