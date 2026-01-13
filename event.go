@@ -3,6 +3,8 @@ package agentkit
 import (
 	"sync"
 	"time"
+
+	"github.com/darkostanimirovic/agentkit/providers"
 )
 
 // EventType represents the type of streaming event
@@ -11,6 +13,8 @@ type EventType string
 const (
 	// Content streaming events
 	EventTypeThinkingChunk EventType = "thinking_chunk"
+	EventTypeReasoningChunk EventType = "reasoning_chunk"
+	EventTypeResponseChunk  EventType = "response_chunk"
 	EventTypeFinalOutput   EventType = "final_output"
 
 	// Agent lifecycle events
@@ -67,6 +71,20 @@ func ThinkingChunk(chunk string) Event {
 // Thinking creates a thinking event (alias for ThinkingChunk)
 func Thinking(content string) Event {
 	return ThinkingChunk(content)
+}
+
+// ReasoningChunk creates a reasoning summary chunk event
+func ReasoningChunk(chunk string) Event {
+	return NewEvent(EventTypeReasoningChunk, map[string]any{
+		"chunk": chunk,
+	})
+}
+
+// ResponseChunk creates a response text chunk event
+func ResponseChunk(chunk string) Event {
+	return NewEvent(EventTypeResponseChunk, map[string]any{
+		"chunk": chunk,
+	})
 }
 
 // ActionDetected creates an action detected event
@@ -187,12 +205,34 @@ func AgentComplete(agentName, output string, totalTokens, iterations int, durati
 	})
 }
 
+// AgentCompleteWithUsage creates an agent complete event including detailed token usage.
+func AgentCompleteWithUsage(agentName, output string, usage providers.TokenUsage, iterations int, durationMs int64) Event {
+	data := map[string]any{
+		"agent_name":   agentName,
+		"output":       output,
+		"total_tokens": usage.TotalTokens,
+		"iterations":   iterations,
+		"duration_ms":  durationMs,
+	}
+	if usage.PromptTokens > 0 {
+		data["prompt_tokens"] = usage.PromptTokens
+	}
+	if usage.CompletionTokens > 0 {
+		data["completion_tokens"] = usage.CompletionTokens
+	}
+	if usage.ReasoningTokens > 0 {
+		data["reasoning_tokens"] = usage.ReasoningTokens
+	}
+	return NewEvent(EventTypeAgentComplete, data)
+}
+
 // HandoffStart creates a handoff start event
-func HandoffStart(fromAgent, toAgent, task string) Event {
+func HandoffStart(fromAgent, toAgent, task, reason string) Event {
 	return NewEvent(EventTypeHandoffStart, map[string]any{
 		"from_agent": fromAgent,
 		"to_agent":   toAgent,
 		"task":       task,
+		"reason":     reason,
 	})
 }
 

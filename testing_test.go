@@ -70,7 +70,7 @@ func TestNewMockLLM_WithStream(t *testing.T) {
 	// Collect events
 	var seen int
 	for event := range events {
-		if event.Type == EventTypeThinkingChunk {
+		if event.Type == EventTypeResponseChunk {
 			seen++
 		}
 	}

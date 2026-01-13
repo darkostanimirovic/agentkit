@@ -124,6 +124,7 @@ func (p *Provider) toAPIRequest(req providers.CompletionRequest) apiRequest {
 		TopP:              req.TopP,
 		Stream:            req.Stream,
 		ParallelToolCalls: req.ParallelToolCalls,
+		Store:             req.Store,
 		Metadata:          req.Metadata,
 		ToolChoice:        req.ToolChoice,
 	}
@@ -139,9 +140,22 @@ func (p *Provider) toAPIRequest(req providers.CompletionRequest) apiRequest {
 	}
 
 	// Convert reasoning effort
-	if req.ReasoningEffort != "" {
+	if req.ReasoningEffort != "" || req.ReasoningSummary != "" {
 		apiReq.Reasoning = &reasoning{
-			Effort: string(req.ReasoningEffort),
+			Effort:  string(req.ReasoningEffort),
+			Summary: req.ReasoningSummary,
+		}
+	}
+
+	// Text configuration
+	if req.TextVerbosity != "" || req.TextFormat != "" {
+		formatType := req.TextFormat
+		if formatType == "" {
+			formatType = "text"
+		}
+		apiReq.Text = &textConfig{
+			Format:    &textFormat{Type: formatType},
+			Verbosity: req.TextVerbosity,
 		}
 	}
 
@@ -246,6 +260,13 @@ func (p *Provider) fromAPIResponse(resp *responseObject) *providers.CompletionRe
 					domainResp.Content += content.Text
 				}
 			}
+		case "reasoning":
+			if summary := extractSummaryTextFromItem(item); summary != "" {
+				if domainResp.ReasoningSummary != "" {
+					domainResp.ReasoningSummary += "\n"
+				}
+				domainResp.ReasoningSummary += summary
+			}
 		case "function_call":
 			// Parse tool call
 			var args map[string]any
@@ -279,15 +300,30 @@ func (p *Provider) fromAPIResponse(resp *responseObject) *providers.CompletionRe
 // Stream reader implementation
 
 type streamReader struct {
-	reader     io.ReadCloser
-	buffer     string
-	logger     *slog.Logger
-	toolCalls  map[string]*toolCall
-	toolByItem map[string]*toolCall
-	textBuffer string
-	responseID string
-	pending    []*providers.StreamChunk
+	reader             io.ReadCloser
+	buffer             string
+	logger             *slog.Logger
+	toolCalls          map[string]*toolCall
+	toolByItem         map[string]*toolCall
+	textBuffer         string
+	summaryBuffer      string
+	responseID         string
+	pending            []*providers.StreamChunk
+	textDeltaSource    string
+	summaryDeltaSource string
 }
+
+const (
+	textSourceOutputText   = "output_text"
+	textSourceContentPart  = "content_part"
+	textSourceOutputItem   = "output_item"
+	textSourceResponseDone = "response_done"
+
+	summarySourceReasoning = "reasoning_summary"
+	summarySourceContent   = "summary_part"
+	summarySourceOutput    = "output_item"
+	summarySourceResponse  = "response_done"
+)
 
 type toolCall struct {
 	ID        string
@@ -306,6 +342,20 @@ func newStreamReader(reader io.ReadCloser, logger *slog.Logger) *streamReader {
 		toolCalls:  make(map[string]*toolCall),
 		toolByItem: make(map[string]*toolCall),
 	}
+}
+
+func (s *streamReader) acceptTextSource(source string) bool {
+	if s.textDeltaSource == "" {
+		s.textDeltaSource = source
+	}
+	return s.textDeltaSource == source
+}
+
+func (s *streamReader) acceptSummarySource(source string) bool {
+	if s.summaryDeltaSource == "" {
+		s.summaryDeltaSource = source
+	}
+	return s.summaryDeltaSource == source
 }
 
 func (s *streamReader) Next() (*providers.StreamChunk, error) {
@@ -371,34 +421,105 @@ func (s *streamReader) parseNextChunk() *providers.StreamChunk {
 
 	// Handle different event types
 	switch apiChunk.Type {
+	case "response.reasoning_summary_text.delta":
+		if !s.acceptSummarySource(summarySourceReasoning) {
+			return nil
+		}
+		return s.emitSummaryDelta(apiChunk.Delta)
+	case "response.reasoning_summary_text.done":
+		if !s.acceptSummarySource(summarySourceReasoning) {
+			return nil
+		}
+		text := apiChunk.Text
+		if text == "" {
+			text = apiChunk.Delta
+		}
+		return s.emitSummaryFinal(text)
 	case "response.output_text.delta":
+		if !s.acceptTextSource(textSourceOutputText) {
+			return nil
+		}
 		return s.emitTextDelta(apiChunk.Delta)
 	case "response.output_text.done":
-		return s.emitTextFinal(apiChunk.Text)
+		if !s.acceptTextSource(textSourceOutputText) {
+			return nil
+		}
+		text := apiChunk.Text
+		if text == "" {
+			text = apiChunk.Delta
+		}
+		return s.emitTextFinal(text)
 	case "response.output_item.done":
 		if apiChunk.Item != nil {
+			if apiChunk.Item.Type == "message" {
+				if s.textDeltaSource != "" {
+					return nil
+				}
+				text := extractOutputTextFromItem(*apiChunk.Item)
+				if text != "" {
+					s.textDeltaSource = textSourceOutputItem
+				}
+				return s.emitTextFinal(text)
+			}
+			if apiChunk.Item.Type == "reasoning" {
+				if s.summaryDeltaSource != "" {
+					return nil
+				}
+				if summary := extractSummaryTextFromItem(*apiChunk.Item); summary != "" {
+					s.summaryDeltaSource = summarySourceOutput
+					return s.emitSummaryFinal(summary)
+				}
+				return nil
+			}
 			if apiChunk.Item.Type == "function_call" {
-				if chunk := s.storeToolCallFromItem(*apiChunk.Item); chunk != nil {
+				if chunk := s.storeToolCallFromItem(*apiChunk.Item, true); chunk != nil {
 					return chunk
 				}
 				return nil
 			}
-			return s.emitTextFinal(extractOutputTextFromItem(*apiChunk.Item))
+			if s.textDeltaSource != "" {
+				return nil
+			}
+			text := extractOutputTextFromItem(*apiChunk.Item)
+			if text != "" {
+				s.textDeltaSource = textSourceOutputItem
+			}
+			return s.emitTextFinal(text)
 		}
 	case "response.output_item.added":
 		if apiChunk.Item != nil && apiChunk.Item.Type == "function_call" {
-			if chunk := s.storeToolCallFromItem(*apiChunk.Item); chunk != nil {
-				return chunk
-			}
+			_ = s.storeToolCallFromItem(*apiChunk.Item, false)
 			return nil
 		}
 	case "response.content_part.delta":
-		if apiChunk.Part != nil && apiChunk.Part.Type == "output_text" {
-			return s.emitTextDelta(apiChunk.Part.Text)
+		if apiChunk.Part != nil {
+			if apiChunk.Part.Type == "output_text" {
+				if !s.acceptTextSource(textSourceContentPart) {
+					return nil
+				}
+				return s.emitTextDelta(apiChunk.Part.Text)
+			}
+			if apiChunk.Part.Type == "summary_text" {
+				if !s.acceptSummarySource(summarySourceContent) {
+					return nil
+				}
+				return s.emitSummaryDelta(apiChunk.Part.Text)
+			}
 		}
 	case "response.content_part.done":
-		if apiChunk.Part != nil && apiChunk.Part.Type == "output_text" {
-			return s.emitTextFinal(apiChunk.Part.Text)
+		if apiChunk.Part != nil {
+			if apiChunk.Part.Type == "output_text" {
+				if !s.acceptTextSource(textSourceContentPart) {
+					return nil
+				}
+				return s.emitTextFinal(apiChunk.Part.Text)
+			}
+			if apiChunk.Part.Type == "summary_text" {
+				if !s.acceptSummarySource(summarySourceContent) {
+					return nil
+				}
+				return s.emitSummaryFinal(apiChunk.Part.Text)
+			}
 		}
 
 	case "response.function_call_arguments.delta":
@@ -453,8 +574,19 @@ func (s *streamReader) parseNextChunk() *providers.StreamChunk {
 				s.pending = append(s.pending, toolChunks...)
 				chunk.FinishReason = providers.FinishReasonToolCalls
 			}
-			if delta := s.emitTextFinal(extractOutputTextFromResponse(apiChunk.Response)); delta != nil {
-				chunk.Content = delta.Content
+			if s.summaryDeltaSource == "" {
+				if summary := extractSummaryTextFromResponse(apiChunk.Response); summary != "" {
+					s.summaryDeltaSource = summarySourceResponse
+					if delta := s.emitSummaryFinal(summary); delta != nil {
+						s.pending = append(s.pending, delta)
+					}
+				}
+			}
+			if s.textDeltaSource == "" {
+				if delta := s.emitTextFinal(extractOutputTextFromResponse(apiChunk.Response)); delta != nil {
+					s.textDeltaSource = textSourceResponseDone
+					chunk.Content = delta.Content
+				}
 			}
 		}
 		s.pending = append(s.pending, chunk)
@@ -531,17 +663,21 @@ func (s *streamReader) ensureToolCall(callID, itemID string, outputIndex int) *t
 }
 
 func buildToolChunkIfReady(tc *toolCall) *providers.StreamChunk {
-	if tc == nil || tc.CallID == "" || tc.Name == "" || tc.Arguments == "" {
+	if tc == nil || tc.CallID == "" || tc.Name == "" {
 		return nil
+	}
+	args := tc.Arguments
+	if args == "" {
+		args = "{}"
 	}
 	return &providers.StreamChunk{
 		ToolCallID: tc.CallID,
 		ToolName:   tc.Name,
-		ToolArgs:   tc.Arguments,
+		ToolArgs:   args,
 	}
 }
 
-func (s *streamReader) storeToolCallFromItem(item outputItem) *providers.StreamChunk {
+func (s *streamReader) storeToolCallFromItem(item outputItem, allowEmit bool) *providers.StreamChunk {
 	if item.Type != "function_call" {
 		return nil
 	}
@@ -569,9 +705,17 @@ func (s *streamReader) storeToolCallFromItem(item outputItem) *providers.StreamC
 	if item.Arguments != "" {
 		tc.Arguments = item.Arguments
 	}
-	if tc.CallID == "" && item.CallID != "" {
-		tc.CallID = item.CallID
-		s.toolCalls[item.CallID] = tc
+	if tc.CallID == "" {
+		if item.CallID != "" {
+			tc.CallID = item.CallID
+			s.toolCalls[item.CallID] = tc
+		} else if item.ID != "" {
+			tc.CallID = item.ID
+			s.toolCalls[item.ID] = tc
+		}
+	}
+	if !allowEmit {
+		return nil
 	}
 	return buildToolChunkIfReady(tc)
 }
@@ -604,6 +748,34 @@ func (s *streamReader) emitTextFinal(text string) *providers.StreamChunk {
 	}
 }
 
+func (s *streamReader) emitSummaryDelta(delta string) *providers.StreamChunk {
+	if delta == "" {
+		return nil
+	}
+	s.summaryBuffer += delta
+	return &providers.StreamChunk{
+		ReasoningSummary: delta,
+	}
+}
+
+func (s *streamReader) emitSummaryFinal(text string) *providers.StreamChunk {
+	if text == "" {
+		return nil
+	}
+	delta := text
+	if s.summaryBuffer != "" && strings.HasPrefix(text, s.summaryBuffer) {
+		delta = text[len(s.summaryBuffer):]
+	}
+	if delta == "" {
+		s.summaryBuffer = text
+		return nil
+	}
+	s.summaryBuffer = text
+	return &providers.StreamChunk{
+		ReasoningSummary: delta,
+	}
+}
+
 func extractOutputText(items []contentItem) string {
 	var builder strings.Builder
 	for _, item := range items {
@@ -621,6 +793,22 @@ func extractOutputTextFromItem(item outputItem) string {
 	return extractOutputText(item.Content)
 }
 
+func extractSummaryTextFromItem(item outputItem) string {
+	if item.Type != "reasoning" {
+		return ""
+	}
+	var builder strings.Builder
+	for _, part := range item.Summary {
+		if part.Type == "summary_text" && part.Text != "" {
+			if builder.Len() > 0 {
+				builder.WriteString("\n")
+			}
+			builder.WriteString(part.Text)
+		}
+	}
+	return builder.String()
+}
+
 func extractOutputTextFromResponse(resp *responseObject) string {
 	if resp == nil {
 		return ""
@@ -628,6 +816,25 @@ func extractOutputTextFromResponse(resp *responseObject) string {
 	var builder strings.Builder
 	for _, item := range resp.Output {
 		builder.WriteString(extractOutputTextFromItem(item))
+	}
+	return builder.String()
+}
+
+func extractSummaryTextFromResponse(resp *responseObject) string {
+	if resp == nil {
+		return ""
+	}
+	var builder strings.Builder
+	for _, item := range resp.Output {
+		if item.Type != "reasoning" {
+			continue
+		}
+		if summary := extractSummaryTextFromItem(item); summary != "" {
+			if builder.Len() > 0 {
+				builder.WriteString("\n")
+			}
+			builder.WriteString(summary)
+		}
 	}
 	return builder.String()
 }
@@ -672,6 +879,8 @@ type apiRequest struct {
 	Stream            bool              `json:"stream,omitempty"`
 	ParallelToolCalls bool              `json:"parallel_tool_calls,omitempty"`
 	Reasoning         *reasoning        `json:"reasoning,omitempty"`
+	Text              *textConfig       `json:"text,omitempty"`
+	Store             bool              `json:"store,omitempty"`
 	Metadata          map[string]string `json:"metadata,omitempty"`
 }
 
@@ -709,7 +918,17 @@ type tool struct {
 }
 
 type reasoning struct {
-	Effort string `json:"effort"`
+	Effort  string `json:"effort,omitempty"`
+	Summary string `json:"summary,omitempty"`
+}
+
+type textConfig struct {
+	Format    *textFormat `json:"format,omitempty"`
+	Verbosity string      `json:"verbosity,omitempty"`
+}
+
+type textFormat struct {
+	Type string `json:"type"`
 }
 
 type responseObject struct {
@@ -732,6 +951,7 @@ type outputItem struct {
 	Status    string        `json:"status,omitempty"`
 	Role      string        `json:"role,omitempty"`
 	Content   []contentItem `json:"content,omitempty"`
+	Summary   []contentItem `json:"summary,omitempty"`
 }
 
 type usage struct {

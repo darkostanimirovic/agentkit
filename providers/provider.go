@@ -41,6 +41,10 @@ type CompletionRequest struct {
 	ToolChoice        string
 	ParallelToolCalls bool
 	ReasoningEffort   ReasoningEffort
+	ReasoningSummary  string
+	TextVerbosity     string
+	TextFormat        string
+	Store             bool
 	Metadata          map[string]string
 }
 
@@ -49,6 +53,7 @@ type CompletionResponse struct {
 	ID           string
 	Content      string
 	ToolCalls    []ToolCall
+	ReasoningSummary string
 	FinishReason FinishReason
 	Usage        TokenUsage
 	Model        string
@@ -110,6 +115,7 @@ type TokenUsage struct {
 // StreamChunk represents a chunk of streaming response.
 type StreamChunk struct {
 	Content      string
+	ReasoningSummary string
 	ToolCallID   string
 	ToolName     string
 	ToolArgs     string

@@ -131,7 +131,8 @@ type ResponseTextFormat struct {
 
 // ResponseTextConfig represents text configuration
 type ResponseTextConfig struct {
-	Format ResponseTextFormat `json:"format"`
+	Format    ResponseTextFormat `json:"format"`
+	Verbosity string             `json:"verbosity,omitempty"`
 }
 
 // ResponseToolChoice represents tool choice configuration
@@ -147,7 +148,8 @@ type ResponseToolFunction struct {
 
 // ResponseReasoning represents reasoning configuration for reasoning models
 type ResponseReasoning struct {
-	Effort ReasoningEffort `json:"effort,omitempty"`
+	Effort  ReasoningEffort `json:"effort,omitempty"`
+	Summary string          `json:"summary,omitempty"`
 }
 
 // ResponseTool represents a tool definition for Responses API
@@ -208,6 +210,7 @@ type ResponseOutputItem struct {
 	CallID    string                `json:"call_id,omitempty"`   // For function_call type
 	Arguments string                `json:"arguments,omitempty"` // For function_call type
 	Content   []ResponseContentItem `json:"content,omitempty"`
+	Summary   []ResponseContentItem `json:"summary,omitempty"`
 	ToolCalls []ResponseToolCall    `json:"tool_calls,omitempty"` // Deprecated - function_call items are separate
 }
 
@@ -259,6 +262,7 @@ type ResponseStreamChunk struct {
 	ItemID         string               `json:"item_id,omitempty"`
 	OutputIndex    int                  `json:"output_index,omitempty"`
 	Delta          string               `json:"delta,omitempty"`     // For delta events
+	Text           string               `json:"text,omitempty"`      // For done events with text
 	Item           *ResponseOutputItem  `json:"item,omitempty"`      // For added/done events
 	Name           string               `json:"name,omitempty"`      // For function_call_arguments.done
 	Arguments      string               `json:"arguments,omitempty"` // For function_call_arguments.done

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Handoff represents a delegation of work from one agent to another.
@@ -141,11 +142,26 @@ func (h *HandoffConfiguration) AsTool(name, description string) Tool {
 	return NewTool(name).
 		WithDescription(description).
 		WithParameter("task", String().Required().WithDescription("The task to delegate to the agent")).
+		WithParameter("reason", String().Optional().WithDescription("Short handoff reason shown to the user")).
+		WithPendingFormatter(func(toolName string, args map[string]any) string {
+			if reason, ok := args["reason"].(string); ok && strings.TrimSpace(reason) != "" {
+				return strings.TrimSpace(reason)
+			}
+			toName := ""
+			if h.to != nil {
+				toName = h.to.getAgentName()
+			}
+			if toName == "" {
+				toName = "specialist"
+			}
+			return fmt.Sprintf("Bringing in %s...", toName)
+		}).
 		WithHandler(func(ctx context.Context, args map[string]any) (any, error) {
 			task, ok := args["task"].(string)
 			if !ok || task == "" {
 				return nil, ErrHandoffTaskEmpty
 			}
+			reason, _ := args["reason"].(string)
 
 			// Create a copy of options
 			opts := h.options
@@ -206,7 +222,7 @@ func (h *HandoffConfiguration) AsTool(name, description string) Tool {
 
 			// Emit handoff.start event
 			if parentPub, hasParent := GetEventPublisher(spanCtx); hasParent {
-				parentPub(HandoffStart(h.from.getAgentName(), h.to.getAgentName(), task))
+				parentPub(HandoffStart(h.from.getAgentName(), h.to.getAgentName(), task, reason))
 			}
 
 			// Execute the handoff with proper trace context
@@ -328,7 +344,7 @@ func (a *Agent) Handoff(ctx context.Context, to *Agent, task string, opts ...Han
 
 	// Emit handoff.start event
 	if parentPub, hasParent := GetEventPublisher(spanCtx); hasParent {
-		parentPub(HandoffStart(a.getAgentName(), to.getAgentName(), task))
+		parentPub(HandoffStart(a.getAgentName(), to.getAgentName(), task, ""))
 	}
 
 	// Execute the handoff in isolation
@@ -375,8 +391,8 @@ func (a *Agent) Handoff(ctx context.Context, to *Agent, task string, opts ...Han
 }
 
 // executeHandoff runs the delegated agent in isolation and captures results.
-// Events are ALWAYS forwarded to the parent event publisher in real-time.
-// The fullContext flag only controls whether trace items are returned in the result.
+// Agent.Run already forwards events to any parent publisher in the context,
+// so this helper only captures local trace data when fullContext is enabled.
 func executeHandoff(ctx context.Context, agent *Agent, task string, opts handoffOptions) (string, string, []HandoffTraceItem, error) {
 	var trace []HandoffTraceItem
 	var response string
@@ -384,25 +400,36 @@ func executeHandoff(ctx context.Context, agent *Agent, task string, opts handoff
 	// Run the agent and get the event channel
 	events := agent.Run(ctx, task)
 
-	// Get parent event publisher to forward events in real-time
-	parentPub, hasParent := GetEventPublisher(ctx)
-
 	// Capture trace items if requested
 	var lastContent string
 	var runErr error
 
 	for event := range events {
-		// ALWAYS forward events to parent if available (real-time streaming)
-		if hasParent {
-			parentPub(event)
-		}
-
 		// Optionally capture trace items based on fullContext flag
 		switch event.Type {
 		case EventTypeThinkingChunk:
 			if chunk, ok := event.Data["chunk"].(string); ok {
 				lastContent += chunk
 				if opts.fullContext {
+					trace = append(trace, HandoffTraceItem{
+						Type:    "thought",
+						Content: chunk,
+					})
+				}
+			}
+		case EventTypeResponseChunk:
+			if chunk, ok := event.Data["chunk"].(string); ok {
+				lastContent += chunk
+				if opts.fullContext {
+					trace = append(trace, HandoffTraceItem{
+						Type:    "response",
+						Content: chunk,
+					})
+				}
+			}
+		case EventTypeReasoningChunk:
+			if opts.fullContext {
+				if chunk, ok := event.Data["chunk"].(string); ok {
 					trace = append(trace, HandoffTraceItem{
 						Type:    "thought",
 						Content: chunk,
@@ -480,10 +507,11 @@ func generateHandoffSummary(trace []HandoffTraceItem) string {
 
 // getAgentName returns a name for the agent for tracing purposes.
 func (a *Agent) getAgentName() string {
-	// Try to extract from system prompt or model
-	if a.systemPrompt != nil {
-		// This is a simple heuristic - could be enhanced
-		return a.model
+	if a == nil {
+		return ""
+	}
+	if a.agentName != "" {
+		return a.agentName
 	}
 	return a.model
 }
@@ -506,6 +534,13 @@ func (a *Agent) AsHandoffTool(name, description string, opts ...HandoffOption) T
 		WithDescription(description).
 		WithParameter("task", String().Required().WithDescription("Task to delegate to the specialist")).
 		WithParameter("background", String().Optional().WithDescription("Optional background or context for the task")).
+		WithParameter("reason", String().Optional().WithDescription("Short handoff reason shown to the user")).
+		WithPendingFormatter(func(toolName string, args map[string]any) string {
+			if reason, ok := args["reason"].(string); ok && strings.TrimSpace(reason) != "" {
+				return strings.TrimSpace(reason)
+			}
+			return fmt.Sprintf("Bringing in %s...", a.getAgentName())
+		}).
 		WithHandler(func(ctx context.Context, args map[string]any) (any, error) {
 			// Extract task from args
 			task, ok := args["task"].(string)
@@ -526,6 +561,7 @@ func (a *Agent) AsHandoffTool(name, description string, opts ...HandoffOption) T
 			if background, ok := args["background"].(string); ok {
 				handoffOpts.context.Background = background
 			}
+			reason, _ := args["reason"].(string)
 
 			// Apply any provided options
 			for _, opt := range opts {
@@ -576,10 +612,13 @@ func (a *Agent) AsHandoffTool(name, description string, opts ...HandoffOption) T
 			}
 
 			// Emit handoff.start event
-			fromAgentName := "caller" // The agent that called this as a tool
+			fromAgentName := "caller"
+			if name, ok := GetAgentName(spanCtx); ok && name != "" {
+				fromAgentName = name
+			}
 			toAgentName := a.getAgentName()
 			if parentPub, hasParent := GetEventPublisher(spanCtx); hasParent {
-				parentPub(HandoffStart(fromAgentName, toAgentName, fullTask))
+				parentPub(HandoffStart(fromAgentName, toAgentName, fullTask, reason))
 			}
 
 			// Execute the handoff with proper trace context

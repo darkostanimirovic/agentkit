@@ -145,8 +145,8 @@ func TestE2E_MultiTurnConversationWithTools(t *testing.T) {
 	}
 
 	// Must have tool execution results
-	if len(toolResults) != 1 || !strings.Contains(toolResults[0], "get_weather") {
-		t.Errorf("Expected get_weather tool result, got: %v", toolResults)
+	if len(toolResults) != 1 || !strings.Contains(strings.ToLower(toolResults[0]), "weather") {
+		t.Errorf("Expected weather tool result, got: %v", toolResults)
 	}
 
 	// Must have final output with weather info
@@ -219,7 +219,7 @@ func TestE2E_StreamingWithChunks(t *testing.T) {
 
 	for event := range events {
 		switch event.Type {
-		case EventTypeThinkingChunk:
+		case EventTypeResponseChunk:
 			chunk := event.Data["chunk"].(string)
 			streamedChunks = append(streamedChunks, chunk)
 			completeResponse += chunk
@@ -227,7 +227,7 @@ func TestE2E_StreamingWithChunks(t *testing.T) {
 			// Verify final output matches streamed chunks
 			finalResp := event.Data["response"].(string)
 			if finalResp != completeResponse && finalResp != "" {
-				t.Errorf("Final output mismatch. Streamed: '%s', Final: '%s'", 
+				t.Errorf("Final output mismatch. Streamed: '%s', Final: '%s'",
 					completeResponse, finalResp)
 			}
 		}
@@ -506,9 +506,10 @@ func TestE2E_ComplexWorkflow(t *testing.T) {
 		switch event.Type {
 		case EventTypeActionResult:
 			if desc, ok := event.Data["description"].(string); ok {
-				if strings.Contains(desc, "search") {
+				descLower := strings.ToLower(desc)
+				if strings.Contains(descLower, "search") {
 					workflow = append(workflow, "search")
-				} else if strings.Contains(desc, "analyze") {
+				} else if strings.Contains(descLower, "analyze") {
 					workflow = append(workflow, "analyze")
 				}
 			}
@@ -660,7 +661,7 @@ func TestE2E_ConcurrentAgents(t *testing.T) {
 func TestE2E_EmptyResponseHandling(t *testing.T) {
 	// Simulate LLM returning empty response (no content, no tool calls)
 	mock := NewMockLLM().WithResponse("", nil)
-	
+
 	agent, err := New(Config{
 		Model:       "gpt-4o",
 		LLMProvider: mock,
@@ -668,15 +669,15 @@ func TestE2E_EmptyResponseHandling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create agent: %v", err)
 	}
-	
+
 	ctx := context.Background()
 	events := agent.Run(ctx, "Test prompt")
-	
+
 	var sawStart bool
 	var sawFinalOutput bool
 	var sawComplete bool
 	var finalOutput string
-	
+
 	for event := range events {
 		switch event.Type {
 		case EventTypeAgentStart:
@@ -690,23 +691,23 @@ func TestE2E_EmptyResponseHandling(t *testing.T) {
 			sawComplete = true
 		}
 	}
-	
+
 	// Verify complete event lifecycle even with empty response
 	if !sawStart {
 		t.Error("Missing agent.start event")
 	}
-	
+
 	if !sawFinalOutput {
 		t.Error("Missing final_output event (should be emitted even when empty)")
 	}
-	
+
 	if !sawComplete {
 		t.Error("Missing agent.complete event")
 	}
-	
+
 	if finalOutput != "" {
 		t.Errorf("Expected empty response, got: %s", finalOutput)
 	}
-	
+
 	t.Log("Empty response properly handled with complete event lifecycle")
 }

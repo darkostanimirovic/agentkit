@@ -65,6 +65,7 @@ func (a *ProviderAdapter) convertRequest(req ResponseRequest) providers.Completi
 		TopP:              req.TopP,
 		Stream:            req.Stream,
 		ParallelToolCalls: req.ParallelToolCalls,
+		Store:             req.Store,
 		Metadata:          req.Metadata,
 	}
 	
@@ -83,6 +84,14 @@ func (a *ProviderAdapter) convertRequest(req ResponseRequest) providers.Completi
 	// Convert reasoning effort
 	if req.Reasoning != nil {
 		domainReq.ReasoningEffort = providers.ReasoningEffort(req.Reasoning.Effort)
+		domainReq.ReasoningSummary = req.Reasoning.Summary
+	}
+
+	if req.Text != nil {
+		domainReq.TextVerbosity = req.Text.Verbosity
+		if req.Text.Format.Type != "" {
+			domainReq.TextFormat = req.Text.Format.Type
+		}
 	}
 	
 	return domainReq
@@ -103,6 +112,20 @@ func (a *ProviderAdapter) convertResponse(resp *providers.CompletionResponse, or
 				{
 					Type: "output_text",
 					Text: resp.Content,
+				},
+			},
+		})
+	}
+
+	if resp.ReasoningSummary != "" {
+		output = append(output, ResponseOutputItem{
+			Type:   "reasoning",
+			ID:     "reasoning_" + resp.ID,
+			Status: "completed",
+			Summary: []ResponseContentItem{
+				{
+					Type: "summary_text",
+					Text: resp.ReasoningSummary,
 				},
 			},
 		})
@@ -154,6 +177,9 @@ func (s *streamAdapter) ReadChunk() (*ResponseStreamChunk, error) {
 	if chunk.Content != "" {
 		apiChunk.Type = "response.output_text.delta"
 		apiChunk.Delta = chunk.Content
+	} else if chunk.ReasoningSummary != "" {
+		apiChunk.Type = "response.reasoning_summary_text.delta"
+		apiChunk.Delta = chunk.ReasoningSummary
 	} else if chunk.ToolName != "" {
 		apiChunk.Type = "response.function_call_arguments.done"
 		apiChunk.Name = chunk.ToolName
@@ -224,6 +250,7 @@ func (w *llmProviderWrapper) toResponseRequest(req providers.CompletionRequest) 
 		TopP:              req.TopP,
 		Stream:            req.Stream,
 		ParallelToolCalls: req.ParallelToolCalls,
+		Store:             req.Store,
 		Metadata:          req.Metadata,
 	}
 	
@@ -239,9 +266,21 @@ func (w *llmProviderWrapper) toResponseRequest(req providers.CompletionRequest) 
 		}
 	}
 	
-	if req.ReasoningEffort != "" {
+	if req.ReasoningEffort != "" || req.ReasoningSummary != "" {
 		apiReq.Reasoning = &ResponseReasoning{
-			Effort: ReasoningEffort(req.ReasoningEffort),
+			Effort:  ReasoningEffort(req.ReasoningEffort),
+			Summary: req.ReasoningSummary,
+		}
+	}
+
+	if req.TextVerbosity != "" || req.TextFormat != "" {
+		formatType := req.TextFormat
+		if formatType == "" {
+			formatType = "text"
+		}
+		apiReq.Text = &ResponseTextConfig{
+			Format: ResponseTextFormat{Type: formatType},
+			Verbosity: req.TextVerbosity,
 		}
 	}
 	
@@ -268,6 +307,15 @@ func (w *llmProviderWrapper) fromResponseObject(resp *ResponseObject) *providers
 			for _, content := range item.Content {
 				if content.Type == "text" || content.Type == "output_text" {
 					domainResp.Content += content.Text
+				}
+			}
+		case "reasoning":
+			for _, summary := range item.Summary {
+				if summary.Type == "summary_text" && summary.Text != "" {
+					if domainResp.ReasoningSummary != "" {
+						domainResp.ReasoningSummary += "\n"
+					}
+					domainResp.ReasoningSummary += summary.Text
 				}
 			}
 		case "function_call":
@@ -308,6 +356,14 @@ func (r *responseStreamWrapper) Next() (*providers.StreamChunk, error) {
 	switch apiChunk.Type {
 	case "response.output_text.delta":
 		chunk.Content = apiChunk.Delta
+	case "response.reasoning_summary_text.delta":
+		chunk.ReasoningSummary = apiChunk.Delta
+	case "response.reasoning_summary_text.done":
+		if apiChunk.Text != "" {
+			chunk.ReasoningSummary = apiChunk.Text
+		} else {
+			chunk.ReasoningSummary = apiChunk.Delta
+		}
 	case "response.function_call_arguments.delta":
 		chunk.ToolArgs = apiChunk.Delta
 	case "response.function_call_arguments.done":

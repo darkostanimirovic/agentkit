@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -56,7 +57,12 @@ type Agent struct {
 	maxIterations     int
 	temperature       float32
 	reasoningEffort   providers.ReasoningEffort
+	reasoningSummary  string
+	textVerbosity     string
+	textFormat        string
+	store             bool
 	streamResponses   bool
+	toolChoice        string
 	retryConfig       RetryConfig
 	timeoutConfig     TimeoutConfig
 	conversationStore ConversationStore
@@ -67,6 +73,7 @@ type Agent struct {
 	eventBuffer       int
 	parallelConfig    ParallelConfig
 	tracer            Tracer
+	agentName         string
 }
 
 // Config holds agent configuration.
@@ -77,7 +84,12 @@ type Config struct {
 	MaxIterations         int
 	Temperature           float32
 	ReasoningEffort       providers.ReasoningEffort
+	ReasoningSummary      string
+	TextVerbosity         string
+	TextFormat            string
+	Store                 bool
 	StreamResponses       bool
+	ToolChoice           string
 	Retry                 *RetryConfig
 	Timeout               *TimeoutConfig
 	ConversationStore     ConversationStore
@@ -88,6 +100,7 @@ type Config struct {
 	EventBuffer           int
 	ParallelToolExecution *ParallelConfig
 	Tracer                Tracer
+	AgentName             string
 }
 
 // Common validation errors.
@@ -184,6 +197,11 @@ func New(cfg Config) (*Agent, error) {
 		}
 	}
 
+	agentName := cfg.AgentName
+	if agentName == "" {
+		agentName = cfg.Model
+	}
+
 	eventBuffer := cfg.EventBuffer
 	if eventBuffer <= 0 {
 		eventBuffer = defaultEventBuffer
@@ -202,7 +220,12 @@ func New(cfg Config) (*Agent, error) {
 		maxIterations:     cfg.MaxIterations,
 		temperature:       cfg.Temperature,
 		reasoningEffort:   cfg.ReasoningEffort,
+		reasoningSummary:  cfg.ReasoningSummary,
+		textVerbosity:     cfg.TextVerbosity,
+		textFormat:        cfg.TextFormat,
+		store:             cfg.Store,
 		streamResponses:   cfg.StreamResponses,
+		toolChoice:        cfg.ToolChoice,
 		retryConfig:       retryConfig,
 		timeoutConfig:     timeoutConfig,
 		conversationStore: cfg.ConversationStore,
@@ -212,6 +235,7 @@ func New(cfg Config) (*Agent, error) {
 		eventBuffer:       eventBuffer,
 		parallelConfig:    parallelConfig,
 		tracer:            tracer,
+		agentName:         agentName,
 	}, nil
 }
 
@@ -303,6 +327,22 @@ func (a *Agent) emit(ctx context.Context, events chan<- Event, event Event) {
 	}
 	if spanID, ok := GetSpanID(ctx); ok && spanID != "" {
 		event.SpanID = spanID
+	}
+	if name, ok := GetAgentName(ctx); ok && name != "" {
+		if event.Data == nil {
+			event.Data = map[string]any{}
+		}
+		if _, exists := event.Data["agent_name"]; !exists {
+			event.Data["agent_name"] = name
+		}
+	}
+	if iteration, ok := GetIteration(ctx); ok {
+		if event.Data == nil {
+			event.Data = map[string]any{}
+		}
+		if _, exists := event.Data["iteration"]; !exists {
+			event.Data["iteration"] = iteration
+		}
 	}
 	events <- event
 }
@@ -413,6 +453,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) <-chan Event {
 		ctx = traceCtx
 
 		ctx = WithTracer(ctx, a.tracer)
+		ctx = WithAgentName(ctx, a.agentName)
 
 		parentPub, hasParent := GetEventPublisher(ctx)
 		var runLoopChan chan<- Event
@@ -448,10 +489,10 @@ func (a *Agent) Run(ctx context.Context, userMessage string) <-chan Event {
 
 		execCtx = a.applyAgentStart(execCtx, userMessage)
 
-		agentName := "agent"
+		agentName := a.agentName
 		a.emit(execCtx, runLoopChan, AgentStart(agentName))
 
-		finalOutput, runErr := a.runLoop(execCtx, userMessage, runLoopChan)
+		finalOutput, usage, iterations, runErr := a.runLoop(execCtx, userMessage, runLoopChan)
 		a.applyAgentComplete(execCtx, finalOutput, runErr)
 
 		// Always emit final output event (even if empty)
@@ -459,7 +500,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) <-chan Event {
 		a.emit(execCtx, runLoopChan, FinalOutput("", finalOutput))
 
 		duration := time.Since(startTime).Milliseconds()
-		a.emit(execCtx, runLoopChan, AgentComplete(agentName, finalOutput, 0, 0, duration))
+		a.emit(execCtx, runLoopChan, AgentCompleteWithUsage(agentName, finalOutput, usage, iterations, duration))
 
 		if hasParent {
 			close(internalChan)
@@ -472,7 +513,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) <-chan Event {
 }
 
 // runLoop orchestrates the multi-turn conversation.
-func (a *Agent) runLoop(ctx context.Context, userMessage string, events chan<- Event) (string, error) {
+func (a *Agent) runLoop(ctx context.Context, userMessage string, events chan<- Event) (string, providers.TokenUsage, int, error) {
 	conversationHistory := []providers.Message{
 		{
 			Role:    providers.RoleUser,
@@ -481,32 +522,41 @@ func (a *Agent) runLoop(ctx context.Context, userMessage string, events chan<- E
 	}
 
 	var finalOutput string
+	var totalUsage providers.TokenUsage
+	iterationsUsed := 0
 
 	for iteration := 0; iteration < a.maxIterations; iteration++ {
 		if err := ctx.Err(); err != nil {
 			runErr := fmt.Errorf("agent execution timeout: %w", err)
 			a.emit(ctx, events, Error(runErr))
-			return finalOutput, runErr
+			return finalOutput, totalUsage, iterationsUsed, runErr
 		}
 
 		a.logger.Debug("agent iteration", "iteration", iteration, "max", a.maxIterations)
 
+		iterCtx := WithIteration(ctx, iteration+1)
 		req := a.buildCompletionRequest(conversationHistory)
 
 		var resp *providers.CompletionResponse
 		var err error
 
 		if a.streamResponses {
-			resp, err = a.runStreamingIteration(ctx, req, events)
+			resp, err = a.runStreamingIteration(iterCtx, req, events)
 		} else {
-			resp, err = a.runNonStreamingIteration(ctx, req, events)
+			resp, err = a.runNonStreamingIteration(iterCtx, req, events)
 		}
 
 		if err != nil {
-			return finalOutput, err
+			return finalOutput, totalUsage, iterationsUsed, err
 		}
 
-		resp.ToolCalls = filterCompleteToolCalls(resp.ToolCalls)
+		resp.ToolCalls = ensureToolCallIDs(filterCompleteToolCalls(resp.ToolCalls))
+		iterationsUsed = iteration + 1
+
+		totalUsage.PromptTokens += resp.Usage.PromptTokens
+		totalUsage.CompletionTokens += resp.Usage.CompletionTokens
+		totalUsage.ReasoningTokens += resp.Usage.ReasoningTokens
+		totalUsage.TotalTokens += resp.Usage.TotalTokens
 
 		assistantMsg := providers.Message{
 			Role:      providers.RoleAssistant,
@@ -521,17 +571,17 @@ func (a *Agent) runLoop(ctx context.Context, userMessage string, events chan<- E
 			break
 		}
 
-		toolMessages := a.executeToolCalls(ctx, resp.ToolCalls, events)
+		toolMessages := a.executeToolCalls(iterCtx, resp.ToolCalls, events)
 		conversationHistory = append(conversationHistory, toolMessages...)
 
 		a.logger.Debug("continuing iteration", "tool_calls_executed", len(toolMessages))
 	}
 
 	if finalOutput == "" {
-		return "", fmt.Errorf("max iterations reached without completion")
+		return "", totalUsage, iterationsUsed, fmt.Errorf("max iterations reached without completion")
 	}
 
-	return finalOutput, nil
+	return finalOutput, totalUsage, iterationsUsed, nil
 }
 
 // Helper methods
@@ -612,6 +662,86 @@ func extractLLMCallTiming(ctx context.Context) llmCallTiming {
 	}
 }
 
+func (a *Agent) logLLMGeneration(ctx context.Context, req providers.CompletionRequest, resp *providers.CompletionResponse, err error) {
+	tracer := GetTracer(ctx)
+	if tracer == nil || isNoOpTracer(tracer) {
+		return
+	}
+
+	timing := extractLLMCallTiming(ctx)
+	if timing.endTime.IsZero() || timing.endTime.Equal(timing.startTime) {
+		timing.endTime = time.Now()
+	}
+
+	modelParams := map[string]any{
+		"temperature":         req.Temperature,
+		"top_p":               req.TopP,
+		"max_tokens":          req.MaxTokens,
+		"tool_choice":         req.ToolChoice,
+		"parallel_tool_calls": req.ParallelToolCalls,
+		"reasoning_effort":    req.ReasoningEffort,
+		"reasoning_summary":   req.ReasoningSummary,
+		"text_verbosity":      req.TextVerbosity,
+		"text_format":         req.TextFormat,
+		"store":               req.Store,
+	}
+
+	input := map[string]any{
+		"system_prompt": req.SystemPrompt,
+		"messages":      req.Messages,
+		"tools":         req.Tools,
+	}
+
+	var output any
+	var usage *UsageInfo
+	if resp != nil {
+		output = map[string]any{
+			"content":           resp.Content,
+			"reasoning_summary": resp.ReasoningSummary,
+			"tool_calls":        resp.ToolCalls,
+			"finish_reason":     resp.FinishReason,
+		}
+		usage = &UsageInfo{
+			PromptTokens:     resp.Usage.PromptTokens,
+			CompletionTokens: resp.Usage.CompletionTokens,
+			ReasoningTokens:  resp.Usage.ReasoningTokens,
+			TotalTokens:      resp.Usage.TotalTokens,
+		}
+	} else if err != nil {
+		output = map[string]any{
+			"error": err.Error(),
+		}
+	}
+
+	gen := GenerationOptions{
+		Name:                "llm.generate",
+		Model:               req.Model,
+		ModelParameters:     modelParams,
+		Input:               input,
+		Output:              output,
+		Usage:               usage,
+		StartTime:           timing.startTime,
+		EndTime:             timing.endTime,
+		CompletionStartTime: timing.completionStartTime,
+		Metadata: map[string]any{
+			"tool_definitions": req.Tools,
+			"tool_calls": func() []providers.ToolCall {
+				if resp != nil {
+					return resp.ToolCalls
+				}
+				return nil
+			}(),
+		},
+		Level: LogLevelDefault,
+	}
+	if err != nil {
+		gen.Level = LogLevelError
+		gen.StatusMessage = err.Error()
+	}
+
+	_ = tracer.LogGeneration(ctx, gen)
+}
+
 // ApprovalHandler is called when a tool requires approval before execution
 // Returns true to approve, false to deny
 type ApprovalHandler func(ctx context.Context, request ApprovalRequest) (bool, error)
@@ -667,6 +797,8 @@ const (
 	spanIDKey         contextKey = "agentkit_span_id"
 	eventPublisherKey contextKey = "agentkit_event_publisher"
 	tracerKey         contextKey = "agentkit_tracer"
+	agentNameKey      contextKey = "agentkit_agent_name"
+	iterationKey      contextKey = "agentkit_iteration"
 )
 
 // EventPublisher is a function that publishes events
@@ -745,6 +877,34 @@ func GetSpanID(ctx context.Context) (string, bool) {
 	return id, ok
 }
 
+// WithAgentName adds the agent name to the context.
+func WithAgentName(ctx context.Context, name string) context.Context {
+	if name == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, agentNameKey, name)
+}
+
+// GetAgentName retrieves the agent name from the context.
+func GetAgentName(ctx context.Context) (string, bool) {
+	name, ok := ctx.Value(agentNameKey).(string)
+	return name, ok
+}
+
+// WithIteration adds the iteration index to the context.
+func WithIteration(ctx context.Context, iteration int) context.Context {
+	if iteration <= 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, iterationKey, iteration)
+}
+
+// GetIteration retrieves the iteration index from the context.
+func GetIteration(ctx context.Context) (int, bool) {
+	val, ok := ctx.Value(iterationKey).(int)
+	return val, ok
+}
+
 // WithTracer adds a tracer to the context for delegated agent inheritance (handoffs/collaboration)
 func WithTracer(ctx context.Context, tracer Tracer) context.Context {
 	return context.WithValue(ctx, tracerKey, tracer)
@@ -761,8 +921,21 @@ func GetTracer(ctx context.Context) Tracer {
 func (a *Agent) buildCompletionRequest(conversationHistory []providers.Message) providers.CompletionRequest {
 	// Build tool definitions
 	tools := make([]providers.ToolDefinition, 0, len(a.tools))
-	for _, tool := range a.tools {
-		tools = append(tools, tool.ToToolDefinition())
+	if len(a.tools) > 0 {
+		names := make([]string, 0, len(a.tools))
+		for name := range a.tools {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			tool := a.tools[name]
+			tools = append(tools, tool.ToToolDefinition())
+		}
+	}
+
+	toolChoice := a.toolChoice
+	if toolChoice == "" {
+		toolChoice = "auto"
 	}
 
 	req := providers.CompletionRequest{
@@ -773,9 +946,13 @@ func (a *Agent) buildCompletionRequest(conversationHistory []providers.Message) 
 		Temperature:       a.temperature,
 		MaxTokens:         0, // Let provider use default
 		TopP:              0, // Let provider use default
-		ToolChoice:        "auto",
+		ToolChoice:        toolChoice,
 		ParallelToolCalls: true,
 		ReasoningEffort:   a.reasoningEffort,
+		ReasoningSummary:  a.reasoningSummary,
+		TextVerbosity:     a.textVerbosity,
+		TextFormat:        a.textFormat,
+		Store:             a.store,
 	}
 
 	return req
@@ -796,13 +973,12 @@ func (a *Agent) runNonStreamingIteration(ctx context.Context, req providers.Comp
 	if err != nil {
 		iterationErr := fmt.Errorf("provider completion error: %w", err)
 		a.applyLLMResponse(callCtx, nil, iterationErr)
+		a.logLLMGeneration(callCtx, req, nil, iterationErr)
 		return nil, a.handleIterationError(callCtx, events, iterationErr, "completion failed", "model", a.model)
 	}
 
 	a.applyLLMResponse(callCtx, resp, nil)
-
-	// TODO: Re-enable tracing after refactoring to use Tracer.LogGeneration
-	// a.logLLMGeneration(callCtx, req, resp)
+	a.logLLMGeneration(callCtx, req, resp, nil)
 
 	if a.loggingConfig.LogResponses {
 		a.logger.Info("completion received",
@@ -835,6 +1011,7 @@ func (a *Agent) runStreamingIteration(ctx context.Context, req providers.Complet
 
 	// Accumulate streaming response
 	var content string
+	var reasoningSummary string
 	var toolCalls []providers.ToolCall
 	var usage *providers.TokenUsage
 	var finishReason providers.FinishReason
@@ -852,10 +1029,22 @@ func (a *Agent) runStreamingIteration(ctx context.Context, req providers.Complet
 			return nil, fmt.Errorf("stream read error: %w", err)
 		}
 
+		if timing := getLLMCallTiming(callCtx); timing != nil && timing.completionStartTime == nil {
+			if chunk.Content != "" || chunk.ReasoningSummary != "" || chunk.ToolCallID != "" || chunk.ToolArgs != "" {
+				start := time.Now()
+				timing.completionStartTime = &start
+			}
+		}
+
 		// Emit thinking chunks
 		if chunk.Content != "" {
 			content += chunk.Content
-			a.emit(ctx, events, Thinking(chunk.Content))
+			a.emit(ctx, events, ResponseChunk(chunk.Content))
+		}
+
+		if chunk.ReasoningSummary != "" {
+			reasoningSummary += chunk.ReasoningSummary
+			a.emit(ctx, events, ReasoningChunk(chunk.ReasoningSummary))
 		}
 
 		// Handle tool call chunks
@@ -896,8 +1085,11 @@ func (a *Agent) runStreamingIteration(ctx context.Context, req providers.Complet
 						}
 					}
 				}
-				if tc.ID == "" || tc.Name == "" || len(tc.Arguments) == 0 {
+				if tc.Name == "" {
 					continue
+				}
+				if tc.Arguments == nil {
+					tc.Arguments = map[string]any{}
 				}
 				toolCalls = append(toolCalls, *tc)
 			}
@@ -906,20 +1098,19 @@ func (a *Agent) runStreamingIteration(ctx context.Context, req providers.Complet
 	}
 
 	resp := &providers.CompletionResponse{
-		ID:           fmt.Sprintf("stream-%d", len(content)), // Generate ID
-		Content:      content,
-		ToolCalls:    toolCalls,
-		FinishReason: finishReason,
-		Model:        a.model,
+		ID:               fmt.Sprintf("stream-%d", len(content)), // Generate ID
+		Content:          content,
+		ToolCalls:        ensureToolCallIDs(toolCalls),
+		FinishReason:     finishReason,
+		Model:            a.model,
+		ReasoningSummary: reasoningSummary,
 	}
 	if usage != nil {
 		resp.Usage = *usage
 	}
 
 	a.applyLLMResponse(callCtx, resp, nil)
-
-	// TODO: Re-enable tracing after refactoring to use Tracer.LogGeneration
-	// a.logLLMGeneration(callCtx, req, resp)
+	a.logLLMGeneration(callCtx, req, resp, nil)
 
 	return resp, nil
 }
@@ -991,12 +1182,44 @@ func filterCompleteToolCalls(toolCalls []providers.ToolCall) []providers.ToolCal
 	}
 	filtered := make([]providers.ToolCall, 0, len(toolCalls))
 	for _, tc := range toolCalls {
-		if tc.ID == "" || tc.Name == "" || len(tc.Arguments) == 0 {
+		if tc.Name == "" {
 			continue
+		}
+		if tc.Arguments == nil {
+			tc.Arguments = map[string]any{}
 		}
 		filtered = append(filtered, tc)
 	}
 	return filtered
+}
+
+func ensureToolCallIDs(toolCalls []providers.ToolCall) []providers.ToolCall {
+	if len(toolCalls) == 0 {
+		return toolCalls
+	}
+	used := make(map[string]struct{}, len(toolCalls))
+	for _, tc := range toolCalls {
+		if tc.ID != "" {
+			used[tc.ID] = struct{}{}
+		}
+	}
+	next := 1
+	for i := range toolCalls {
+		if toolCalls[i].ID != "" {
+			continue
+		}
+		for {
+			id := fmt.Sprintf("call_%d", next)
+			next++
+			if _, exists := used[id]; exists {
+				continue
+			}
+			toolCalls[i].ID = id
+			used[id] = struct{}{}
+			break
+		}
+	}
+	return toolCalls
 }
 
 func (a *Agent) executeToolCall(ctx context.Context, toolCall providers.ToolCall, events chan<- Event) providers.Message {
@@ -1012,6 +1235,12 @@ func (a *Agent) executeToolCall(ctx context.Context, toolCall providers.ToolCall
 			ToolCallID: toolCall.ID,
 		}
 	}
+
+	args := toolCall.Arguments
+	if args == nil {
+		args = map[string]any{}
+	}
+	a.emit(ctx, events, ActionDetected(tool.FormatPending(args), toolCall.ID))
 
 	// Check approval if required
 	if a.approvalConfig.requiresApproval(toolCall.Name) {
@@ -1060,7 +1289,7 @@ func (a *Agent) executeToolCall(ctx context.Context, toolCall providers.ToolCall
 	} else {
 		content = formatToolResult(result)
 		a.logger.Info("tool executed successfully", "tool", toolCall.Name)
-		a.emit(ctx, events, ToolResult(toolCall.Name, result))
+		a.emit(ctx, events, ActionResult(tool.FormatResult(result), result))
 	}
 
 	return providers.Message{

@@ -46,6 +46,32 @@ func TestActionDetected(t *testing.T) {
 	}
 }
 
+func TestReasoningChunk(t *testing.T) {
+	chunk := "Reasoning summary..."
+	event := ReasoningChunk(chunk)
+
+	if event.Type != EventTypeReasoningChunk {
+		t.Errorf("expected type %s, got %s", EventTypeReasoningChunk, event.Type)
+	}
+
+	if event.Data["chunk"] != chunk {
+		t.Errorf("expected chunk %s, got %v", chunk, event.Data["chunk"])
+	}
+}
+
+func TestResponseChunk(t *testing.T) {
+	chunk := "Response delta..."
+	event := ResponseChunk(chunk)
+
+	if event.Type != EventTypeResponseChunk {
+		t.Errorf("expected type %s, got %s", EventTypeResponseChunk, event.Type)
+	}
+
+	if event.Data["chunk"] != chunk {
+		t.Errorf("expected chunk %s, got %v", chunk, event.Data["chunk"])
+	}
+}
+
 func TestActionResult(t *testing.T) {
 	description := "✓ Assigned to platform team"
 	result := map[string]any{
@@ -140,6 +166,8 @@ func TestEventTimestamps(t *testing.T) {
 func TestEventTypes(t *testing.T) {
 	types := []EventType{
 		EventTypeThinkingChunk,
+		EventTypeReasoningChunk,
+		EventTypeResponseChunk,
 		EventTypeActionDetected,
 		EventTypeActionResult,
 		EventTypeFinalOutput,
@@ -156,6 +184,8 @@ func TestEventTypes(t *testing.T) {
 
 	expectedTypes := map[EventType]string{
 		EventTypeThinkingChunk:  "thinking_chunk",
+		EventTypeReasoningChunk: "reasoning_chunk",
+		EventTypeResponseChunk:  "response_chunk",
 		EventTypeActionDetected: "action_detected",
 		EventTypeActionResult:   "action_result",
 		EventTypeFinalOutput:    "final_output",
