@@ -16,8 +16,8 @@ type TimeoutConfig struct {
 func DefaultTimeoutConfig() TimeoutConfig {
 	return TimeoutConfig{
 		AgentExecution: 5 * time.Minute,  // Total agent run
-		LLMCall:        30 * time.Second, // Per API call
-		ToolExecution:  10 * time.Second, // Per tool
+		LLMCall:        1 * time.Minute, // Per API call
+		ToolExecution:  1 * time.Minute, // Per tool
 		StreamChunk:    5 * time.Second,  // Stream read
 	}
 }
